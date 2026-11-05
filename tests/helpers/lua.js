@@ -121,7 +121,10 @@ function runAddon(opts = {}) {
 	const file = path.join(os.tmpdir(), `polestar-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.lua`);
 	fs.writeFileSync(file, program);
 	try {
-		const r = spawnSync(findLua(), [file], { encoding: 'utf8', cwd: ROOT, maxBuffer: 64 * 1024 * 1024 });
+		// An explicit runner lets a suite also exercise its portable logic on
+		// another Lua VM. The default remains the native Lua 5.1 client model.
+		const [command, ...prefix] = opts.luaRunner || [findLua()];
+		const r = spawnSync(command, [...prefix, file], { encoding: 'utf8', cwd: ROOT, maxBuffer: 64 * 1024 * 1024 });
 		if (r.error) throw r.error;
 		if (r.status !== 0) {
 			const err = new Error(`Lua failed (exit ${r.status}):\n${r.stderr}\n${r.stdout}`);

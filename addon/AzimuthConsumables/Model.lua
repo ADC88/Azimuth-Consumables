@@ -29,9 +29,28 @@ end
 
 -- An explicit mapping overrides the cast spell: many foods and custom
 -- consumables apply a different aura. Match by ID first, localized name second.
-function M.Effect(item, auras, settings, now)
+function M.Effect(item, auras, settings, now, weapons)
     local mapping = settings.mappings[item.id]
+    local learned = settings.weaponEnchants and settings.weaponEnchants[item.id]
     local best
+    local function consider(effect)
+        local expires = effect.expires
+        if not expires or expires == 0 or expires > now then
+            local rank = expires and expires > 0 and expires or math.huge
+            local prior = best and best.expires
+            if not best or rank > (prior and prior > 0 and prior or math.huge) then best = effect end
+        end
+    end
+    if weapons and ((mapping and mapping.weapon) or (not mapping and learned)) then
+        for _, effect in ipairs(weapons.effects) do
+            if mapping and mapping.weapon then
+                if (mapping.hand == "either" or mapping.hand == effect.hand)
+                    and mapping.enchantID == effect.enchantID then consider(effect) end
+            elseif learned[effect.enchantID] then consider(effect) end
+        end
+        return best
+    end
+    if mapping and mapping.weapon then return nil end
     for _, aura in ipairs(auras) do
         local match = false
         if mapping then
@@ -42,9 +61,7 @@ function M.Effect(item, auras, settings, now)
             match = item.spellID == aura.spellID
                 or (item.spellName and item.spellName == aura.name)
         end
-        if match and (not aura.expires or aura.expires == 0 or aura.expires > now) then
-            if not best or (aura.expires or math.huge) > (best.expires or math.huge) then best = aura end
-        end
+        if match then consider(aura) end
     end
     return best
 end
@@ -58,13 +75,18 @@ function M.Time(seconds)
 end
 
 -- Countdown is the active effect, never the item's reuse cooldown.
-function M.State(item, auras, settings, now, readable)
-    local effect = M.Effect(item, auras, settings, now)
+function M.State(item, auras, settings, now, readable, weapons)
+    local effect = M.Effect(item, auras, settings, now, weapons)
     if effect then
         local remaining = effect.expires and effect.expires > 0 and effect.expires - now or nil
         return { text = M.Time(remaining), glow = false, active = true, effect = effect }
     end
-    if not readable then return { text = "?", glow = false } end
+    local mapping = settings.mappings[item.id]
+    local isWeapon = mapping and mapping.weapon or (not mapping and (item.weapon
+        or (settings.weaponEnchants and settings.weaponEnchants[item.id])))
+    if (isWeapon and (not weapons or not weapons.readable)) or (not isWeapon and not readable) then
+        return { text = "?", glow = false }
+    end
     local ready = not item.cooldownEnd or item.cooldownEnd <= now
     return { text = ready and "READY" or ("CD " .. M.Time(item.cooldownEnd - now)), glow = true }
 end

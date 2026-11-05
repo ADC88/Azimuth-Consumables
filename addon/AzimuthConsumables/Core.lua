@@ -1,9 +1,12 @@
 local ADDON, ns = ...
 local M = ns.Model
+local W = ns.Weapons
 local db, char, bar, picker
 local buttons, items, itemByID, auras = {}, {}, {}, {}
-local auraReadable, dirty, initialized = true, false, false
-local requested = {}
+local auraReadable, initialized = true, false
+local requested, metadata = {}, {}
+local weapons = { effects = {}, readable = false }
+local pendingWeapon, layoutSignature
 local queueLayout
 local SIZE, GAP, COLUMNS = 40, 7, 8
 
@@ -54,18 +57,25 @@ local function scanBags()
             local info = C_Container.GetContainerItemInfo(bag, slot)
             local id = info and read(info.itemID)
             if id then
-                local _, _, _, _, icon, classID, subClassID = C_Item.GetItemInfoInstant(id)
-                if classID == 0 or db.mappings[id] then
+                local cached = metadata[id]
+                if not cached then
+                    local _, _, _, _, icon, classID, subClassID = C_Item.GetItemInfoInstant(id)
                     local name = C_Item.GetItemInfo(id)
                     local spellName, spellID = C_Item.GetItemSpell(id)
-                    if not name and not requested[id] and C_Item.RequestLoadItemDataByID then
+                    cached = { name = name or ("Item " .. id), icon = icon, classID = classID,
+                        subClassID = subClassID, spellName = spellName, spellID = spellID }
+                    if name then metadata[id] = cached end
+                    if (not name or not classID) and not requested[id] and C_Item.RequestLoadItemDataByID then
                         requested[id] = true
                         C_Item.RequestLoadItemDataByID(id)
                     end
+                end
+                if cached.classID == 0 or db.mappings[id] then
                     slots[#slots + 1] = {
-                        id = id, count = read(info.stackCount) or 0, name = name or ("Item " .. id),
-                        icon = icon, classID = classID, subClassID = subClassID,
-                        spellName = spellName, spellID = spellID,
+                        id = id, count = read(info.stackCount) or 0, name = cached.name,
+                        icon = cached.icon, classID = cached.classID, subClassID = cached.subClassID,
+                        spellName = cached.spellName, spellID = cached.spellID,
+                        weapon = W.IsCandidate(cached),
                     }
                 end
             end
@@ -86,10 +96,23 @@ local function closePicker()
     if picker then picker:Hide() end
 end
 
+local function pollWeapons()
+    weapons = W.Read(GetTime())
+    if pendingWeapon then
+        if GetTime() > pendingWeapon.deadline then pendingWeapon = nil
+        elseif C_Item and C_Item.GetItemCount then
+            local count = read(C_Item.GetItemCount(pendingWeapon.id, false, false))
+            if type(count) == "number" and W.Learn(pendingWeapon.before, weapons,
+                pendingWeapon.count, count, db, pendingWeapon.id) then pendingWeapon = nil end
+        end
+    end
+end
+
 local rebuild
 local function openPicker(item)
     if combat() then say("Link buffs after leaving combat."); return end
     scanAuras()
+    pollWeapons()
     if not picker then
         picker = CreateFrame("Frame", "AzimuthConsumablesBuffPicker", UIParent, "BackdropTemplate")
         picker:SetSize(330, 380)
@@ -115,6 +138,12 @@ local function openPicker(item)
     picker.title:SetText(item.name .. " - link effect")
     picker.itemID = item.id
     local choices = { { name = "Automatic matching (reset)", reset = true } }
+    for _, effect in ipairs(weapons.effects) do
+        choices[#choices + 1] = {
+            name = (effect.hand == "main" and "Main hand" or "Off hand") .. ": weapon enchant " .. effect.enchantID,
+            weapon = true, hand = effect.hand, enchantID = effect.enchantID,
+        }
+    end
     local seen = {}
     for _, aura in ipairs(auras) do
         if not seen[aura.spellID] then
@@ -131,6 +160,9 @@ local function openPicker(item)
             row:SetScript("OnClick", function(self)
                 if combat() then say("Link buffs after leaving combat."); return end
                 if self.choice.reset then db.mappings[picker.itemID] = nil
+                elseif self.choice.weapon then db.mappings[picker.itemID] = {
+                    weapon = true, hand = self.choice.hand, enchantID = self.choice.enchantID,
+                }
                 else db.mappings[picker.itemID] = { self.choice.spellID } end
                 say("Updated effect link. Use /azc map for multiple buff IDs.")
                 closePicker()
@@ -183,6 +215,14 @@ local function newButton()
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    b:HookScript("PreClick", function(self, mouse, down)
+        if mouse ~= "LeftButton" or down or not self.item or not self.item.weapon then return end
+        pollWeapons()
+        local count = C_Item.GetItemCount and read(C_Item.GetItemCount(self.item.id, false, false))
+        if type(count) == "number" then
+            pendingWeapon = { id = self.item.id, count = count, before = weapons, deadline = GetTime() + 45 }
+        end
+    end)
     b:HookScript("PostClick", function(self, mouse, down)
         if mouse ~= "RightButton" or down then return end
         if IsShiftKeyDown() then
@@ -205,7 +245,7 @@ local function paint()
             if C_Container.GetItemCooldown then start, duration, enabled = C_Container.GetItemCooldown(item.id) end
             start, duration, enabled = read(start) or 0, read(duration) or 0, read(enabled)
             item.cooldownEnd = duration > 1.5 and start + duration or nil
-            local state = M.State(item, auras, db, now, auraReadable)
+            local state = M.State(item, auras, db, now, auraReadable, weapons)
             b.count:SetText(current and current.count or 0)
             b.time:SetText(state.text)
             b.time:SetTextColor(state.active and 0.4 or 1, state.active and 1 or 0.85, state.active and 0.65 or 0.4)
@@ -213,20 +253,21 @@ local function paint()
             local usable = C_Item.IsUsableItem(item.id)
             b.icon:SetDesaturated(not current or item.count == 0 or enabled == 0 or not read(usable))
             if duration > 1.5 then b.cooldown:SetCooldown(start, duration) else b.cooldown:Clear() end
-            if item.count == 0 and not state.active and queueLayout then queueLayout() end
+            if item.count == 0 and not state.active and queueLayout and not combat() then queueLayout() end
         end
     end
 end
 
 rebuild = function()
     if not initialized then return end
+    pollWeapons()
     scanBags()
     -- Keep an active timer after consuming the last copy; show a dim icon and
     -- zero count until the effect expires. It then leaves the bar out of combat.
     for _, button in ipairs(buttons) do
         local previous = button.item
         if previous and not db.hidden[previous.id] and not itemByID[previous.id]
-            and M.Effect(previous, auras, db, GetTime()) then
+            and M.Effect(previous, auras, db, GetTime(), weapons) then
             local tracked = {}
             for k, v in pairs(previous) do tracked[k] = v end
             tracked.count = 0
@@ -234,13 +275,22 @@ rebuild = function()
             itemByID[tracked.id] = tracked
         end
     end
-    if combat() then dirty = true; paint(); return end
-    dirty = false
-    closePicker()
+    if combat() then paint(); return end
+    -- Keep picker contents stable while bag/item-data events arrive. Rebuilding
+    -- the bar must not close or repurpose a row the player is about to click.
+    local p = char.position or { "CENTER", "CENTER", 0, -200 }
+    local signatureParts = { tostring(db.scale), tostring(db.disabled), table.concat(p, ":") }
+    for _, item in ipairs(items) do signatureParts[#signatureParts + 1] = tostring(item.id) end
+    local signature = table.concat(signatureParts, "|")
+    if signature == layoutSignature then
+        for _, b in ipairs(buttons) do if b.item and itemByID[b.item.id] then b.item = itemByID[b.item.id] end end
+        paint()
+        return
+    end
+    layoutSignature = signature
     local width = math.max(240, math.min(#items, COLUMNS) * (SIZE + GAP) + GAP)
     bar:SetSize(width, 28 + math.max(1, math.ceil(#items / COLUMNS)) * (SIZE + GAP))
     bar:ClearAllPoints()
-    local p = char.position or { "CENTER", "CENTER", 0, -200 }
     bar:SetPoint(p[1], UIParent, p[2], p[3], p[4])
     bar:SetScale(db.scale)
     for i, item in ipairs(items) do
@@ -265,10 +315,23 @@ end
 
 local function initialize()
     if initialized or combat() then return end
-    AzimuthConsumablesDB = AzimuthConsumablesDB or {}
-    AzimuthConsumablesCharDB = AzimuthConsumablesCharDB or {}
+    AzimuthConsumablesDB = type(AzimuthConsumablesDB) == "table" and AzimuthConsumablesDB or {}
+    AzimuthConsumablesCharDB = type(AzimuthConsumablesCharDB) == "table" and AzimuthConsumablesCharDB or {}
     db, char = AzimuthConsumablesDB, AzimuthConsumablesCharDB
-    db.hidden, db.mappings = db.hidden or {}, db.mappings or {}
+    db.hidden = type(db.hidden) == "table" and db.hidden or {}
+    db.mappings = type(db.mappings) == "table" and db.mappings or {}
+    db.weaponEnchants = type(db.weaponEnchants) == "table" and db.weaponEnchants or {}
+    for id, mapping in pairs(db.mappings) do
+        if type(mapping) ~= "table" then db.mappings[id] = nil end
+    end
+    for id, ids in pairs(db.weaponEnchants) do
+        if type(ids) ~= "table" then db.weaponEnchants[id] = nil end
+    end
+    local p = char.position
+    local anchors = { CENTER = true, TOP = true, BOTTOM = true, LEFT = true, RIGHT = true,
+        TOPLEFT = true, TOPRIGHT = true, BOTTOMLEFT = true, BOTTOMRIGHT = true }
+    if type(p) ~= "table" or not anchors[p[1]] or not anchors[p[2]]
+        or type(p[3]) ~= "number" or type(p[4]) ~= "number" then char.position = nil end
     db.scale = math.max(0.6, math.min(2, tonumber(db.scale) or 1))
     bar = CreateFrame("Frame", "AzimuthConsumablesBar", UIParent, "BackdropTemplate")
     bar:SetMovable(true)
@@ -293,7 +356,7 @@ local function initialize()
     local elapsed = 0
     bar:SetScript("OnUpdate", function(_, dt)
         elapsed = elapsed + dt
-        if elapsed >= 0.2 then elapsed = 0; paint() end
+        if elapsed >= 0.2 then elapsed = 0; pollWeapons(); paint() end
     end)
     initialized = true
     scanAuras()
@@ -308,16 +371,24 @@ SlashCmdList.AZIMUTHCONSUMABLES = function(message)
     command = command:lower()
     if command == "lock" then db.locked = true; say("Position locked.")
     elseif command == "unlock" then db.locked = false; say("Drag the header to move.")
-    elseif command == "hide" then db.disabled = true; rebuild()
+    elseif command == "hide" then db.disabled = true; closePicker(); rebuild()
     elseif command == "show" then db.disabled = false; rebuild()
     elseif command == "restore" then db.hidden = {}; rebuild()
     elseif command == "scale" and tonumber(args) then db.scale = math.max(0.6, math.min(2, tonumber(args))); rebuild()
     elseif command == "reset" then char.position = nil; db.scale = 1; rebuild()
     elseif command == "map" then
         local idText, spells = args:match("^(%d+)%s+(.+)$")
-        if not idText then say("/azc map ITEM_ID BUFF_ID [BUFF_ID ...], or /azc map ITEM_ID auto"); return end
+        if not idText then say("/azc map ITEM_ID BUFF_ID [BUFF_ID ...], auto, main, off, or either"); return end
         local id, ids = tonumber(idText), {}
-        if spells == "auto" then db.mappings[id] = nil
+        if spells == "auto" then db.mappings[id] = nil; db.weaponEnchants[id] = nil
+        elseif spells == "main" or spells == "off" or spells == "either" then
+            pollWeapons()
+            local found
+            for _, effect in ipairs(weapons.effects) do
+                if spells == "either" or spells == effect.hand then found = effect; break end
+            end
+            if not found then say("Apply the stone first, then link its active weapon enchant."); return end
+            db.mappings[id] = { weapon = true, hand = spells, enchantID = found.enchantID }
         else
             for n in spells:gmatch("%d+") do ids[#ids + 1] = tonumber(n) end
             if #ids == 0 then say("Specify at least one buff spell ID."); return end
@@ -336,7 +407,8 @@ end
 
 local events = CreateFrame("Frame")
 for _, event in ipairs({ "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
-    "BAG_UPDATE_DELAYED", "BAG_UPDATE_COOLDOWN", "UNIT_AURA", "ITEM_DATA_LOAD_RESULT", "GET_ITEM_INFO_RECEIVED" }) do
+    "BAG_UPDATE_DELAYED", "BAG_UPDATE_COOLDOWN", "UNIT_AURA", "UNIT_INVENTORY_CHANGED",
+    "PLAYER_EQUIPMENT_CHANGED", "ITEM_DATA_LOAD_RESULT", "GET_ITEM_INFO_RECEIVED" }) do
     events:RegisterEvent(event)
 end
 local scheduled = false
@@ -346,7 +418,7 @@ local function rebuildSoon()
     C_Timer.After(0, function() scheduled = false; rebuild() end)
 end
 queueLayout = rebuildSoon
-events:SetScript("OnEvent", function(_, event, unit)
+events:SetScript("OnEvent", function(_, event, unit, success)
     if event == "PLAYER_LOGIN" or event == "PLAYER_REGEN_ENABLED" then
         initialize()
         if initialized then scanAuras(); rebuildSoon() end
@@ -358,6 +430,15 @@ events:SetScript("OnEvent", function(_, event, unit)
         if secret(unit) then return end
         if unit == "player" then scanAuras(); paint() end
     elseif event == "BAG_UPDATE_COOLDOWN" then paint()
+    elseif event == "ITEM_DATA_LOAD_RESULT" or event == "GET_ITEM_INFO_RECEIVED" then
+        -- Ignore unrelated item-cache activity. A completed request is removed
+        -- before refreshing so cached reads cannot trigger a rebuild storm.
+        if not secret(unit) and requested[unit] then
+            requested[unit] = nil
+            if success then metadata[unit] = nil; rebuildSoon() end
+        end
+    elseif event == "UNIT_INVENTORY_CHANGED" then
+        if not secret(unit) and unit == "player" then pollWeapons(); rebuildSoon() end
     else
         if event == "PLAYER_ENTERING_WORLD" then scanAuras() end
         rebuildSoon()

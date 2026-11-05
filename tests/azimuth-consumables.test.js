@@ -1,12 +1,18 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { runAddon } = require('./helpers/lua');
+const { runAddon: runLua } = require('./helpers/lua');
+function runAddon(options) {
+    const luaRunner = process.env.AZIMUTH_LUA_RUNNER
+        ? [process.execPath, process.env.AZIMUTH_LUA_RUNNER] : undefined;
+    return runLua({ ...options, luaRunner });
+}
 
 function model(script) {
     return runAddon({ script: `
         local ns = {}
         assert(loadfile("addon/AzimuthConsumables/Model.lua"))("AzimuthConsumables", ns)
+        assert(loadfile("addon/AzimuthConsumables/Weapons.lua"))("AzimuthConsumables", ns)
         local M = ns.Model
         local db = { hidden = {}, mappings = {} }
         ${script}
@@ -78,10 +84,10 @@ test('consumables: duration labels are rounded up and never negative', () => {
 });
 
 // Exercise the real UI and event handlers against the project's fake client.
-function integration(script) {
+function integration(script, before = '') {
     return runAddon({ script: `
         local slots = { { itemID = 1, stackCount = 2 }, { itemID = 1, stackCount = 3 } }
-        local buffs = {}
+        local buffs, weaponData = {}, {}
         C_Container = {
             GetContainerNumSlots = function(bag) return bag == 0 and #slots or 0 end,
             GetContainerItemInfo = function(_, slot) return slots[slot] end,
@@ -92,10 +98,18 @@ function integration(script) {
             GetItemInfo = function() return "Example Elixir" end,
             GetItemSpell = function() return "Elixir Effect", 100 end,
             IsUsableItem = function() return true end,
+            GetWeaponEnchantInfo = function(slot) return weaponData[slot] or {} end,
+            GetItemCount = function(id)
+                local count = 0
+                for _, slot in ipairs(slots) do if slot.itemID == id then count = count + slot.stackCount end end
+                return count
+            end,
         }
         C_UnitAuras = { GetAuraDataByIndex = function(_, i) return buffs[i] end }
+        ${before}
         local ns = {}
         assert(loadfile("addon/AzimuthConsumables/Model.lua"))("AzimuthConsumables", ns)
+        assert(loadfile("addon/AzimuthConsumables/Weapons.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/Core.lua"))("AzimuthConsumables", ns)
         stub.fire("PLAYER_LOGIN")
         ${script}
@@ -121,6 +135,164 @@ test('consumables UI: secure item clicks, combined count, aura gained/expired, a
     assert.deepEqual(active, ['1:00', 0]);
     assert.deepEqual(empty, [true, '0', '1:00']);
     assert.equal(expired, false);
+});
+
+test('consumables UI: picker survives bag refreshes and item-cache events until a selection is made', () => {
+    const [open, refreshed, mapped] = integration(`
+        local b = ns.Buttons[1]
+        buffs = { { spellId = 200, name = "Example Buff", expirationTime = 600, duration = 600 } }
+        stub.RunScript(b, "PostClick", "RightButton", false)
+        local picker = AzimuthConsumablesBuffPicker
+        emit(picker:IsShown())
+        -- A layout change while the menu is open must not dismiss its rows.
+        slots[#slots + 1] = { itemID = 2, stackCount = 1 }
+        stub.fire("BAG_UPDATE_DELAYED")
+        stub.fire("GET_ITEM_INFO_RECEIVED", 999, true)
+        stub.runTimers()
+        emit({ picker:IsShown(), picker.itemID, picker.rows[2].choice.spellID })
+        local row = picker.rows[2]
+        row.scripts.OnClick(row)
+        emit({ picker:IsShown(), AzimuthConsumablesDB.mappings[1][1] })
+    `);
+    assert.equal(open, true);
+    assert.deepEqual(refreshed, [true, 1, 200]);
+    assert.deepEqual(mapped, [false, 200]);
+});
+
+test('consumables UI: right-click links a weapon enchant already active before login', () => {
+    const [chosen, active] = integration(`
+        local b = ns.Buttons[1]
+        stub.RunScript(b, "PostClick", "RightButton", false)
+        local row = AzimuthConsumablesBuffPicker.rows[2]
+        emit({ row.choice.weapon, row.choice.hand, row.choice.enchantID })
+        row.scripts.OnClick(row)
+        emit({ b.time:GetText(), b.glow:GetAlpha(), AzimuthConsumablesDB.mappings[1].enchantID })
+    `, `
+        weaponData[0] = { { hasEnchant = true, enchantType = 2, enchantID = 1643, timeLeft = 1800000 } }
+    `);
+    assert.deepEqual(chosen, [true, 'main', 1643]);
+    assert.deepEqual(active, ['30:00', 0, 1643]);
+});
+
+test('consumables: Forever weapon API converts milliseconds and excludes permanent enchants', () => {
+    const [snapshot] = model(`
+        C_Item = { GetWeaponEnchantInfo = function(slot)
+            if slot == 0 then return {
+                { hasEnchant = true, enchantType = 1, enchantID = 999, timeLeft = 0 },
+                { hasEnchant = true, enchantType = 2, enchantID = 13, timeLeft = 60000 },
+            } end
+            return { { hasEnchant = true, enchantType = 2, enchantID = 14, timeLeft = 120000 } }
+        end }
+        emit(ns.Weapons.Read(100))
+    `);
+    assert.equal(snapshot.readable, true);
+    assert.equal(snapshot.effects.length, 2);
+    assert.deepEqual(snapshot.effects.map(e => [e.hand, e.enchantID, e.expires]), [
+        ['main', 13, 160], ['off', 14, 220],
+    ]);
+});
+
+test('consumables: exact weapon IDs and hands prevent other stones/imbues suppressing the reminder', () => {
+    const [wrong, right, unknown, removed] = model(`
+        db.mappings[1] = { weapon = true, hand = "main", enchantID = 13 }
+        local item = { id = 1 }
+        local weapons = { readable = true, effects = {
+            { hand = "main", enchantID = 999, expires = 200 },
+            { hand = "off", enchantID = 13, expires = 200 },
+        } }
+        emit(M.State(item, {}, db, 100, true, weapons))
+        weapons.effects[1].enchantID = 13
+        emit(M.State(item, {}, db, 100, false, weapons))
+        emit(M.State(item, {}, db, 100, true, { readable = false, effects = {} }))
+        emit(M.State(item, {}, db, 100, false, { readable = true, effects = {} }))
+    `);
+    assert.equal(wrong.glow, true);
+    assert.equal(right.text, '1:40');
+    assert.equal(right.glow, false);
+    assert.equal(unknown.text, '?');
+    assert.equal(unknown.glow, false);
+    assert.equal(removed.glow, true);
+});
+
+test('consumables: weapon learning rejects failed uses and ambiguous weapon changes', () => {
+    const [failed, ambiguous, learned, id] = model(`
+        local before = { readable = true, effects = {} }
+        local after = { readable = true, effects = { { hand = "main", enchantID = 13, expires = 1900 } } }
+        emit(ns.Weapons.Learn(before, after, 5, 5, db, 1))
+        after.effects[2] = { hand = "off", enchantID = 14, expires = 1900 }
+        emit(ns.Weapons.Learn(before, after, 5, 4, db, 1))
+        after.effects[2] = nil
+        emit(ns.Weapons.Learn(before, after, 5, 4, db, 1))
+        emit(db.weaponEnchants[1][13])
+    `);
+    assert.equal(failed, false);
+    assert.equal(ambiguous, false);
+    assert.equal(learned, true);
+    assert.equal(id, true);
+});
+
+test('consumables UI: using a sharpening stone learns its enchant and tracks last-copy expiry', () => {
+    const [learned, expired] = integration(`
+        local b = ns.Buttons[1]
+        stub.RunScript(b, "PreClick", "LeftButton", false)
+        slots = {}
+        weaponData[0] = { { hasEnchant = true, enchantType = 2, enchantID = 13, timeLeft = 1800000 } }
+        stub.fire("UNIT_INVENTORY_CHANGED", "player")
+        stub.runTimers()
+        emit({ AzimuthConsumablesDB.weaponEnchants[1][13], b.time:GetText(), b.count:GetText(), b.glow:GetAlpha() })
+        weaponData[0] = {}
+        stub.fire("UNIT_INVENTORY_CHANGED", "player")
+        stub.runTimers()
+        emit(b:IsShown())
+    `, `
+        C_Item.GetItemInfo = function() return "Rough Sharpening Stone" end
+        C_Item.GetItemInfoInstant = function(id) return id, "Consumable", "Item Enhancement", "", 123, 0, 6 end
+    `);
+    assert.deepEqual(learned, [true, '30:00', '0', 0]);
+    assert.equal(expired, false);
+});
+
+test('consumables UI: no recursive timer refresh when the last effect expires during combat', () => {
+    const [locked, finished] = integration(`
+        local b = ns.Buttons[1]
+        buffs = { { spellId = 100, name = "Elixir Effect", expirationTime = 60 } }
+        stub.fire("UNIT_AURA", "player")
+        slots = {}
+        ns.Refresh()
+        stub.inCombat = true
+        buffs = {}
+        stub.fire("UNIT_AURA", "player")
+        local after = C_Timer.After
+        local queued = 0
+        C_Timer.After = function(delay, fn)
+            queued = queued + 1
+            assert(queued < 20, "recursive refresh loop")
+            return after(delay, fn)
+        end
+        stub.advance(0.4)
+        emit({ b:IsShown(), queued })
+        stub.inCombat = false
+        stub.fire("PLAYER_REGEN_ENABLED")
+        stub.runTimers()
+        emit(b:IsShown())
+    `);
+    assert.deepEqual(locked, [true, 0]);
+    assert.equal(finished, false);
+});
+
+test('consumables UI: unchanged bag layout does not rewrite protected click attributes', () => {
+    const [writes] = integration(`
+        local b = ns.Buttons[1]
+        local original, writes = b.SetAttribute, 0
+        b.SetAttribute = function(self, ...) writes = writes + 1; return original(self, ...) end
+        for i = 1, 5 do
+            stub.fire("BAG_UPDATE_DELAYED")
+            stub.fire("GET_ITEM_INFO_RECEIVED", 1, true)
+            stub.runTimers()
+        end
+        emit(writes)
+    `);
+    assert.equal(writes, 0);
 });
 
 test('consumables UI: combat keeps click attributes stable until leaving combat', () => {
