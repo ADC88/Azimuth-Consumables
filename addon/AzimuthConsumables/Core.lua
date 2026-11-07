@@ -1,4 +1,5 @@
 local ADDON, ns = ...
+local unpack = unpack or table.unpack
 local M = ns.Model
 local W = ns.Weapons
 local db, char, bar, picker
@@ -6,10 +7,14 @@ local buttons, items, itemByID, auras = {}, {}, {}, {}
 local auraReadable, initialized = true, false
 local requested, metadata = {}, {}
 local weapons = { effects = {}, readable = false }
-local pendingWeapon, layoutSignature
+local pendingWeapon, layoutSignature, appliedGlow
 local queueLayout
 local SIZE, GAP, COLUMNS = 40, 7, 8
 local EXPRESSWAY = [[Interface\AddOns\EllesmereUI\media\fonts\Expressway.TTF]]
+local FOOD_AND_DRINK = 5
+local BACKGROUND, GLOW = { 0.025, 0.04, 0.06 }, { 1, 0.72, 0.16 }
+local locale = GetLocale()
+local englishTooltips = locale == "enUS" or locale == "enGB"
 
 local function secret(value)
     return issecretvalue and issecretvalue(value) or false
@@ -50,6 +55,18 @@ local function scanAuras()
     end
 end
 
+local function recoveryFood(id)
+    if combat() or not (C_TooltipInfo and C_TooltipInfo.GetItemByID) then return end
+    local ok, tooltip = pcall(C_TooltipInfo.GetItemByID, id)
+    if not ok or secret(tooltip) or not tooltip or not read(tooltip.lines) then return end
+    local lines = {}
+    for _, line in ipairs(tooltip.lines) do
+        if secret(line) or secret(line.leftText) then return end
+        if type(line.leftText) == "string" then lines[#lines + 1] = line.leftText end
+    end
+    if #lines > 0 then return M.IsRecoveryFood(lines) end
+end
+
 local function scanBags()
     local slots = {}
     if not (C_Container and C_Item) then return end
@@ -63,7 +80,7 @@ local function scanBags()
                     local _, _, _, _, icon, classID, subClassID = C_Item.GetItemInfoInstant(id)
                     local name = C_Item.GetItemInfo(id)
                     local spellName, spellID = C_Item.GetItemSpell(id)
-                    cached = { name = name or ("Item " .. id), icon = icon, classID = classID,
+                    cached = { id = id, name = name or ("Item " .. id), icon = icon, classID = classID,
                         subClassID = subClassID, spellName = spellName, spellID = spellID }
                     if name then metadata[id] = cached end
                     if (not name or not classID) and not requested[id] and C_Item.RequestLoadItemDataByID then
@@ -72,10 +89,15 @@ local function scanBags()
                     end
                 end
                 if cached.classID == 0 or db.mappings[id] then
+                    if englishTooltips and db.excludeRecoveryFood and cached.classID == 0 and cached.subClassID == FOOD_AND_DRINK
+                        and cached.spellID and cached.recoveryFood == nil then
+                        cached.recoveryFood = recoveryFood(id)
+                    end
                     slots[#slots + 1] = {
                         id = id, count = read(info.stackCount) or 0, name = cached.name,
                         icon = cached.icon, classID = cached.classID, subClassID = cached.subClassID,
                         spellName = cached.spellName, spellID = cached.spellID,
+                        recoveryFood = cached.recoveryFood,
                         weapon = W.IsCandidate(cached),
                     }
                 end
@@ -215,11 +237,13 @@ local function newButton()
     -- Plain textures can animate during lockdown; no secure visibility or
     -- attributes are changed when a timer updates.
     b.glow = CreateFrame("Frame", nil, b)
+    b.glowEdges = {}
     b.glow:SetPoint("TOPLEFT", -3, 3)
     b.glow:SetPoint("BOTTOMRIGHT", 3, -3)
     for _, edge in ipairs({ "TOP", "BOTTOM", "LEFT", "RIGHT" }) do
         local tex = b.glow:CreateTexture(nil, "OVERLAY")
-        tex:SetColorTexture(1, 0.72, 0.16, 1)
+        tex:SetColorTexture(unpack(db.glowColor))
+        b.glowEdges[#b.glowEdges + 1] = tex
         if edge == "TOP" or edge == "BOTTOM" then
             tex:SetHeight(3); tex:SetPoint(edge .. "LEFT"); tex:SetPoint(edge .. "RIGHT")
         else
@@ -258,6 +282,7 @@ local function newButton()
         if IsShiftKeyDown() then
             db.hidden[self.item.id] = true
             rebuild()
+            if ns.RefreshOptions then ns.RefreshOptions() end
         else
             openPicker(self.item)
         end
@@ -296,7 +321,8 @@ rebuild = function()
     -- zero count until the effect expires. It then leaves the bar out of combat.
     for _, button in ipairs(buttons) do
         local previous = button.item
-        if previous and not db.hidden[previous.id] and not itemByID[previous.id]
+        if previous and not M.IsExcluded(metadata[previous.id] or previous, db)
+            and not itemByID[previous.id]
             and M.Effect(previous, auras, db, GetTime(), weapons) then
             local tracked = {}
             for k, v in pairs(previous) do tracked[k] = v end
@@ -306,6 +332,14 @@ rebuild = function()
         end
     end
     if combat() then paint(); return end
+    local background = db.backgroundColor
+    bar:SetBackdropColor(background[1], background[2], background[3], 0.88)
+    if appliedGlow ~= db.glowColor then
+        appliedGlow = db.glowColor
+        for _, button in ipairs(buttons) do
+            for _, edge in ipairs(button.glowEdges) do edge:SetColorTexture(unpack(appliedGlow)) end
+        end
+    end
     -- Keep picker contents stable while bag/item-data events arrive. Rebuilding
     -- the bar must not close or repurpose a row the player is about to click.
     local p = char.position or { "CENTER", "CENTER", 0, -200 }
@@ -343,6 +377,15 @@ rebuild = function()
     paint()
 end
 
+local function savedColor(value, fallback)
+    local color = {}
+    for channel = 1, 3 do
+        local component = type(value) == "table" and tonumber(value[channel])
+        color[channel] = math.max(0, math.min(1, component or fallback[channel]))
+    end
+    return color
+end
+
 local function initialize()
     if initialized or combat() then return end
     AzimuthConsumablesDB = type(AzimuthConsumablesDB) == "table" and AzimuthConsumablesDB or {}
@@ -362,15 +405,19 @@ local function initialize()
         TOPLEFT = true, TOPRIGHT = true, BOTTOMLEFT = true, BOTTOMRIGHT = true }
     if type(p) ~= "table" or not anchors[p[1]] or not anchors[p[2]]
         or type(p[3]) ~= "number" or type(p[4]) ~= "number" then char.position = nil end
-    db.scale = math.max(0.6, math.min(2, tonumber(db.scale) or 1))
+    db.scale = M.Scale(db.scale)
+    db.backgroundColor = savedColor(db.backgroundColor, BACKGROUND)
+    db.glowColor = savedColor(db.glowColor, GLOW)
+    db.excludeRecoveryFood = db.excludeRecoveryFood ~= false
     bar = CreateFrame("Frame", "AzimuthConsumablesBar", UIParent, "BackdropTemplate")
     bar:SetMovable(true)
     bar:SetClampedToScreen(true)
     bar:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8" })
-    bar:SetBackdropColor(0.025, 0.04, 0.06, 0.88)
     local header = CreateFrame("Button", nil, bar)
     header:SetPoint("TOPLEFT"); header:SetPoint("TOPRIGHT"); header:SetHeight(24)
     header:RegisterForDrag("LeftButton")
+    header:RegisterForClicks("RightButtonUp")
+    header:SetScript("OnClick", function() if ns.OpenOptions then ns.OpenOptions() end end)
     label(header, 11, "LEFT", 8, 0):SetText("|cff61d9c4AZIMUTH|r  Consumables")
     header:SetScript("OnDragStart", function() if not combat() and not db.locked then bar:StartMoving() end end)
     local function stopDrag()
@@ -382,16 +429,17 @@ local function initialize()
     header:SetScript("OnDragStop", stopDrag)
     ns.StopDrag = stopDrag
     bar.empty = label(bar, 10, "BOTTOMLEFT", 8, 12)
-    bar.empty:SetText("No usable consumables in bags. /azc help")
+    bar.empty:SetText("No matching consumables. /azc opens settings.")
     local elapsed = 0
     bar:SetScript("OnUpdate", function(_, dt)
         elapsed = elapsed + dt
         if elapsed >= 0.2 then elapsed = 0; pollWeapons(); paint() end
     end)
     initialized = true
+    ns.RegisterOptions(db, rebuild, label)
     scanAuras()
     rebuild()
-    say("Loaded. Drag the header to move; /azc help for options.")
+    say("Loaded. Drag the header to move; /azc opens settings.")
 end
 
 SLASH_AZIMUTHCONSUMABLES1 = "/azc"
@@ -399,12 +447,14 @@ SlashCmdList.AZIMUTHCONSUMABLES = function(message)
     if not initialized then say("Ready after combat ends."); return end
     local command, args = message:match("^(%S*)%s*(.-)$")
     command = command:lower()
-    if command == "lock" then db.locked = true; say("Position locked.")
+    if command == "" or command == "config" or command == "options" then
+        if ns.OpenOptions then ns.OpenOptions() end
+    elseif command == "lock" then db.locked = true; say("Position locked.")
     elseif command == "unlock" then db.locked = false; say("Drag the header to move.")
     elseif command == "hide" then db.disabled = true; closePicker(); rebuild()
     elseif command == "show" then db.disabled = false; rebuild()
     elseif command == "restore" then db.hidden = {}; rebuild()
-    elseif command == "scale" and tonumber(args) then db.scale = math.max(0.6, math.min(2, tonumber(args))); rebuild()
+    elseif command == "scale" and tonumber(args) then db.scale = M.Scale(args); rebuild()
     elseif command == "reset" then char.position = nil; db.scale = 1; rebuild()
     elseif command == "map" then
         local idText, spells = args:match("^(%d+)%s+(.+)$")
@@ -430,9 +480,11 @@ SlashCmdList.AZIMUTHCONSUMABLES = function(message)
         for _, aura in ipairs(auras) do say(aura.spellID .. " - " .. aura.name) end
     else
         say("Left-click uses an item; right-click links its active buff; Shift-right-click hides it.")
+        say("/azc opens settings for size, colors, locking, and filters.")
         say("/azc lock | unlock | hide | show | restore | scale 1.2 | reset | buffs")
         say("/azc map ITEM_ID BUFF_ID [BUFF_ID ...] - link custom effects. Glow = missing; countdown = active effect; CD = reuse cooldown.")
     end
+    if ns.RefreshOptions then ns.RefreshOptions() end
 end
 
 local events = CreateFrame("Frame")

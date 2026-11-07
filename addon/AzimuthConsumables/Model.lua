@@ -3,10 +3,47 @@ local _, ns = ...
 local M = {}
 ns.Model = M
 
+function M.Scale(value)
+    return math.max(0.6, math.min(2, tonumber(value) or 1))
+end
+
+-- Only hide food whose use text is entirely ordinary health/mana recovery.
+-- Keep unfamiliar wording and extra effects visible.
+function M.IsRecoveryFood(lines)
+    local recovery
+    for _, line in ipairs(lines) do
+        local text = line:lower():gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+            :gsub("%s+", " "):match("^%s*(.-)%s*$")
+        if text:find("well fed", 1, true) or text:find("^if you spend")
+            or text:find("^increases ") or text:find("^grants ") then return false end
+        local effect = text:match("^use:%s*(.+)$")
+        if effect then
+            if recovery then return false end
+            effect = effect:gsub(" must remain seated while eating and drinking%.$", "")
+                :gsub(" must remain seated while eating%.$", "")
+                :gsub(" must remain seated while drinking%.$", "")
+            local resources = effect:match("^restores (.+) over [%d.]+ sec%.$")
+                or effect:match("^restores (.+) over [%d.]+ seconds?%.$")
+            if not resources then return false end
+            local amount = "[%d,.]+%%?"
+            recovery = resources:match("^" .. amount .. " health$")
+                or resources:match("^" .. amount .. " mana$")
+                or resources:match("^" .. amount .. " health and " .. amount .. " mana$")
+            if not recovery then return false end
+        end
+    end
+    if recovery then return true end
+end
+
+function M.IsExcluded(item, settings)
+    return settings.hidden[item.id] or (settings.excludeRecoveryFood and item.recoveryFood
+        and not settings.mappings[item.id])
+end
+
 function M.Items(slots, settings)
     local byID, items = {}, {}
     for _, item in ipairs(slots) do
-        if item.id and (item.count or 0) > 0 and not settings.hidden[item.id]
+        if item.id and (item.count or 0) > 0 and not M.IsExcluded(item, settings)
             and (settings.mappings[item.id] or (item.classID == 0 and item.spellID)) then
             if byID[item.id] then
                 byID[item.id].count = byID[item.id].count + item.count

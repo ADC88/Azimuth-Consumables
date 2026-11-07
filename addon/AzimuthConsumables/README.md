@@ -10,6 +10,10 @@ Extract `AzimuthConsumables.zip` directly into your game's `Interface/AddOns` di
 
 The bar and effect picker use Expressway Regular when it is registered through LibSharedMedia or available from EllesmereUI. WoW's default fonts are used if Expressway cannot be loaded.
 
+- Type `/azc` or right-click the bar header to open Settings. Adjust bar size, lock its position, and choose separate colors for the background and missing-effect glow.
+- Add an item ID or item link to the blacklist, or Shift-right-click an icon. Use **Remove** beside an entry to restore that item. The blacklist is account-wide.
+- **Hide food and drink that only restore health or mana** is enabled by default. It recognizes standard English recovery tooltips and keeps buff food, manually mapped items and items with unclear or localized tooltips visible. Uncheck it to show recovery food.
+
 - Left-click an icon to use that consumable. Duplicate bag stacks share one icon and combined count.
 - A pulsing gold outline means the tracked effect is missing. A green countdown shows how long the active effect has left.
 - `CD` means the item's reuse cooldown. The swipe also shows reuse cooldown; it is separate from the active-effect timer.

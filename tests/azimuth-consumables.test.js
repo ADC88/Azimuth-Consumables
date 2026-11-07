@@ -110,11 +110,86 @@ function integration(script, before = '') {
         local ns = {}
         assert(loadfile("addon/AzimuthConsumables/Model.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/Weapons.lua"))("AzimuthConsumables", ns)
+        assert(loadfile("addon/AzimuthConsumables/Options.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/Core.lua"))("AzimuthConsumables", ns)
         stub.fire("PLAYER_LOGIN")
         ${script}
     ` }).emitted;
 }
+
+test('consumables UI: settings apply scale, lock, colors and blacklist entries', () => {
+    const [category, saved, hidden, shown] = integration(`
+        SlashCmdList.AZIMUTHCONSUMABLES("")
+        emit(stub.openedCategory)
+        local panel = AzimuthConsumablesOptions
+        local input
+        for _, control in ipairs(panel.children) do
+            if control:GetObjectType() == "EditBox" then input = control end
+            if control:GetObjectType() == "CheckButton" and not AzimuthConsumablesDB.locked then
+                control:SetChecked(true)
+                control:Click()
+            end
+            if control:GetText() == "+" then control:Click() end
+            if control:GetText() == "Missing-effect glow" then control:Click() end
+        end
+        ColorPickerFrame.GetColorRGB = function() return 0.1, 0.2, 0.3 end
+        ColorPickerFrame.info.swatchFunc()
+        emit({ AzimuthConsumablesDB.scale, AzimuthConsumablesBar:GetScale(),
+            AzimuthConsumablesDB.locked, AzimuthConsumablesDB.glowColor })
+        input:SetText("|Hitem:1:0|h[Example Elixir]|h")
+        stub.RunScript(input, "OnEnterPressed")
+        emit({ AzimuthConsumablesDB.hidden[1], ns.Buttons[1]:IsShown() })
+        for _, frame in ipairs(stub.frames) do
+            if frame:GetText() == "Remove" then frame:Click(); break end
+        end
+        emit({ AzimuthConsumablesDB.hidden[1] == nil, ns.Buttons[1]:IsShown() })
+    `);
+    assert.equal(category, 'Azimuth Consumables');
+    assert.deepEqual(saved, [1.05, 1.05, true, [0.1, 0.2, 0.3]]);
+    assert.deepEqual(hidden, [true, false]);
+    assert.deepEqual(shown, [true, true]);
+});
+
+test('consumables UI: filters plain food while retaining buff food, uncertain food and manual mappings', () => {
+    const [filtered, all, mapped, blacklisted] = integration(`
+        local function shownIDs()
+            local ids = {}
+            for _, b in ipairs(ns.Buttons) do
+                if b:IsShown() then ids[#ids + 1] = b.item.id end
+            end
+            emit(ids)
+        end
+        shownIDs()
+        AzimuthConsumablesDB.excludeRecoveryFood = false
+        ns.Refresh()
+        shownIDs()
+        AzimuthConsumablesDB.excludeRecoveryFood = true
+        SlashCmdList.AZIMUTHCONSUMABLES("map 1 100")
+        shownIDs()
+        AzimuthConsumablesDB.hidden[1] = true
+        ns.Refresh()
+        shownIDs()
+    `, `
+        slots = {
+            { itemID = 1, stackCount = 1 }, { itemID = 2, stackCount = 1 },
+            { itemID = 3, stackCount = 1 }, { itemID = 4, stackCount = 1 },
+        }
+        C_Item.GetItemInfoInstant = function(id)
+            return id, "Consumable", "Food & Drink", "", 123, 0, id == 4 and 1 or 5
+        end
+        local plain = "|cffffffffUse:|r Restores 1,392 health over 30 sec. Must remain seated while eating."
+        C_TooltipInfo = { GetItemByID = function(id)
+            if id == 3 then return nil end
+            local lines = { { leftText = plain } }
+            if id == 2 then lines[2] = { leftText = "If you spend at least 10 seconds eating you will become Well Fed." } end
+            return { lines = lines }
+        end }
+    `);
+    assert.deepEqual(filtered, [4, 2, 3]);
+    assert.deepEqual(all, [4, 1, 2, 3]);
+    assert.deepEqual(mapped, [4, 1, 2, 3]);
+    assert.deepEqual(blacklisted, [4, 2, 3]);
+});
 
 test('consumables UI: uses Expressway for bar and picker text and falls back when unavailable', () => {
     const fonts = String.raw`
