@@ -68,6 +68,7 @@ function W.IsCandidate(item)
     local spell = string.lower(item.spellName or "")
     return name:find("sharpening stone", 1, true) ~= nil
         or name:find("weightstone", 1, true) ~= nil
+        or name:match(" oil$") ~= nil
         or spell:find("sharpen", 1, true) ~= nil
 end
 

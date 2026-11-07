@@ -231,6 +231,27 @@ test('consumables: weapon learning rejects failed uses and ambiguous weapon chan
     assert.equal(id, true);
 });
 
+test('consumables UI: weapon oil opens the equipment tab on release outside combat', () => {
+    const [calls] = integration(`
+        local calls = {}
+        ToggleCharacter = function(tab, onlyShow) calls[#calls + 1] = { tab, onlyShow } end
+        local oil = ns.Buttons[1]
+        stub.RunScript(oil, "PostClick", "LeftButton", true)
+        stub.RunScript(oil, "PostClick", "LeftButton", false)
+        stub.RunScript(oil, "PostClick", "LeftButton", false)
+        stub.inCombat = true
+        stub.RunScript(oil, "PostClick", "LeftButton", false)
+        stub.inCombat = false
+        slots = { { itemID = 2, stackCount = 1 } }
+        ns.Refresh()
+        stub.RunScript(ns.Buttons[1], "PostClick", "LeftButton", false)
+        emit(calls)
+    `, `
+        C_Item.GetItemInfo = function(id) return id == 1 and "Wizard Oil" or "Example Elixir" end
+    `);
+    assert.deepEqual(calls, [['PaperDollFrame', true], ['PaperDollFrame', true]]);
+});
+
 test('consumables UI: using a sharpening stone learns its enchant and tracks last-copy expiry', () => {
     const [learned, expired] = integration(`
         local b = ns.Buttons[1]

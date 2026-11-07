@@ -2,7 +2,7 @@
 ## Title: Azimuth Consumables
 ## Notes: Clickable bag consumables, active effect timers and missing-buff reminders for WoW Forever.
 ## Author: ADC88
-## Version: 0.2.0
+## Version: 0.2.1
 ## SavedVariables: AzimuthConsumablesDB
 ## SavedVariablesPerCharacter: AzimuthConsumablesCharDB
 

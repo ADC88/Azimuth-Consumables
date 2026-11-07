@@ -39,6 +39,8 @@ Multiple IDs mean alternative effects; the longest matching remaining effect is 
 
 ## Sharpening stones and weapon enchants
 
+Left-click a stone or weapon oil outside combat to use it and open the Character equipment tab. Click the weapon slot you want to coat. Repeated clicks keep the tab open.
+
 Weapon enchant timers use Forever's `C_Item.GetWeaponEnchantInfo`, with a legacy global API fallback. Both hands are read; temporary enchants and imbues are distinguished by their exact enchant ID, and permanent enchants are excluded. Weapon enchant IDs are different from buff spell IDs.
 
 - **Already applied a stone?** Right-click its consumable icon and choose **Main hand: weapon enchant ...** or **Off hand: weapon enchant ...**. This links that exact enchant and hand, and starts its real remaining-time countdown. Weapon oils and poisons can be linked this way too.

@@ -179,6 +179,12 @@ local function openPicker(item)
     picker:Show()
 end
 
+local function isWeaponConsumable(item)
+    if not item then return false end
+    local mapping = db.mappings[item.id]
+    return item.weapon or db.weaponEnchants[item.id] or (mapping and mapping.weapon)
+end
+
 local function newButton()
     local b = CreateFrame("Button", nil, bar, "SecureActionButtonTemplate")
     b:SetSize(SIZE, SIZE)
@@ -216,7 +222,7 @@ local function newButton()
     end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
     b:HookScript("PreClick", function(self, mouse, down)
-        if mouse ~= "LeftButton" or down or not self.item or not self.item.weapon then return end
+        if mouse ~= "LeftButton" or down or not isWeaponConsumable(self.item) then return end
         pollWeapons()
         local count = C_Item.GetItemCount and read(C_Item.GetItemCount(self.item.id, false, false))
         if type(count) == "number" then
@@ -224,7 +230,16 @@ local function newButton()
         end
     end)
     b:HookScript("PostClick", function(self, mouse, down)
-        if mouse ~= "RightButton" or down then return end
+        if down or not self.item then return end
+        if mouse == "LeftButton" then
+            local item = itemByID[self.item.id]
+            if item and item.count > 0 and isWeaponConsumable(item) and not combat() and ToggleCharacter then
+                -- onlyShow keeps the equipment tab open on repeated clicks.
+                ToggleCharacter("PaperDollFrame", true)
+            end
+            return
+        end
+        if mouse ~= "RightButton" then return end
         if IsShiftKeyDown() then
             db.hidden[self.item.id] = true
             rebuild()
