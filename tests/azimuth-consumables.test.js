@@ -116,6 +116,44 @@ function integration(script, before = '') {
     ` }).emitted;
 }
 
+test('consumables UI: uses Expressway for bar and picker text and falls back when unavailable', () => {
+    const fonts = String.raw`
+        local b = ns.Buttons[1]
+        stub.RunScript(b, "PostClick", "RightButton", false)
+        local picker = AzimuthConsumablesBuffPicker
+        local row = picker.rows[1]:GetFontString()
+        emit({ { b.count:GetFont() }, { b.time:GetFont() },
+            { picker.title:GetFont() }, { row:GetFont() } })
+    `;
+    const shared = 'SharedExpressway.ttf';
+    const ellesmere = String.raw`Interface\AddOns\EllesmereUI\media\fonts\Expressway.TTF`;
+    const standard = String.raw`Fonts\FRIZQT__.TTF`;
+    const [registered] = integration(fonts, `
+        LibStub = function(name, silent)
+            assert(name == "LibSharedMedia-3.0" and silent)
+            return { Fetch = function(_, kind, face, noDefault)
+                assert(kind == "font" and face == "Expressway" and noDefault)
+                return "${shared}"
+            end }
+        end
+    `);
+    const [installed] = integration(fonts);
+    const [fallback] = integration(fonts, `
+        local methods = stub.Methods
+        local setFont = methods.SetFont
+        methods.SetFont = function(self, path, size, flags)
+            if path ~= STANDARD_TEXT_FONT then error("Font unavailable") end
+            return setFont(self, path, size, flags)
+        end
+    `);
+    for (const [actual, expected] of [[registered, shared], [installed, ellesmere], [fallback, standard]]) {
+        assert.deepEqual(actual, [
+            [expected, 11, 'OUTLINE'], [expected, 10, 'OUTLINE'],
+            [expected, 12, 'OUTLINE'], [expected, 12, ''],
+        ]);
+    }
+});
+
 test('consumables UI: secure item clicks, combined count, aura gained/expired, and last-copy timer', () => {
     const [initial, active, empty, expired] = integration(`
         local b = ns.Buttons[1]

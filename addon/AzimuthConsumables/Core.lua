@@ -9,6 +9,7 @@ local weapons = { effects = {}, readable = false }
 local pendingWeapon, layoutSignature
 local queueLayout
 local SIZE, GAP, COLUMNS = 40, 7, 8
+local EXPRESSWAY = [[Interface\AddOns\EllesmereUI\media\fonts\Expressway.TTF]]
 
 local function secret(value)
     return issecretvalue and issecretvalue(value) or false
@@ -85,9 +86,20 @@ local function scanBags()
     for _, item in ipairs(items) do itemByID[item.id] = item end
 end
 
+local function setTextFont(text, size, flags, fallback)
+    local media = LibStub and LibStub("LibSharedMedia-3.0", true)
+    local registered = media and media:Fetch("font", "Expressway", true)
+    if registered then
+        local ok, applied = pcall(text.SetFont, text, registered, size, flags)
+        if ok and applied then return end
+    end
+    local ok, applied = pcall(text.SetFont, text, EXPRESSWAY, size, flags)
+    if not (ok and applied) then text:SetFont(fallback, size, flags) end
+end
+
 local function label(parent, size, point, x, y)
     local text = parent:CreateFontString(nil, "OVERLAY")
-    text:SetFont(STANDARD_TEXT_FONT, size, "OUTLINE")
+    setTextFont(text, size, "OUTLINE", STANDARD_TEXT_FONT)
     text:SetPoint(point, parent, point, x, y)
     return text
 end
@@ -157,6 +169,9 @@ local function openPicker(item)
             row = CreateFrame("Button", nil, picker.content, "UIPanelButtonTemplate")
             row:SetSize(275, 25)
             row:SetPoint("TOPLEFT", 0, -(i - 1) * 29)
+            local text = row:GetFontString()
+            local font, size, flags = text:GetFont()
+            setTextFont(text, size, flags, font)
             row:SetScript("OnClick", function(self)
                 if combat() then say("Link buffs after leaving combat."); return end
                 if self.choice.reset then db.mappings[picker.itemID] = nil

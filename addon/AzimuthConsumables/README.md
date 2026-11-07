@@ -8,6 +8,8 @@ Extract `AzimuthConsumables.zip` directly into your game's `Interface/AddOns` di
 
 ## Use
 
+The bar and effect picker use Expressway Regular when it is registered through LibSharedMedia or available from EllesmereUI. WoW's default fonts are used if Expressway cannot be loaded.
+
 - Left-click an icon to use that consumable. Duplicate bag stacks share one icon and combined count.
 - A pulsing gold outline means the tracked effect is missing. A green countdown shows how long the active effect has left.
 - `CD` means the item's reuse cooldown. The swipe also shows reuse cooldown; it is separate from the active-effect timer.
