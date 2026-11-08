@@ -266,6 +266,41 @@ test('consumables UI: secure item clicks, combined count, aura gained/expired, a
     assert.equal(expired, false);
 });
 
+test('consumables UI: bar fits tracked items, wraps, and shrinks after the last effect expires', () => {
+    const [titled, compact, wrapped, combat, active, empty] = integration(`
+        local bar = AzimuthConsumablesBar
+        emit({ bar:GetWidth() >= bar.title:GetStringWidth() + 16, bar:GetHeight() })
+        AzimuthConsumablesDB.hideTitle = true
+        ns.Refresh()
+        emit({ bar:GetWidth(), bar:GetHeight() })
+        for id = 2, 9 do slots[#slots + 1] = { itemID = id, stackCount = 1 } end
+        ns.Refresh()
+        emit({ bar:GetWidth(), bar:GetHeight() })
+        stub.inCombat = true
+        slots = { { itemID = 1, stackCount = 1 } }
+        ns.Refresh()
+        emit({ bar:GetWidth(), bar:GetHeight() })
+        stub.inCombat = false
+        stub.fire("PLAYER_REGEN_ENABLED")
+        stub.runTimers()
+        buffs = { { spellId = 100, name = "Elixir Effect", duration = 60, expirationTime = 60 } }
+        stub.fire("UNIT_AURA", "player")
+        slots = {}
+        ns.Refresh()
+        emit({ bar:GetWidth(), bar:GetHeight(), ns.Buttons[1].count:GetText() })
+        buffs = {}
+        stub.fire("UNIT_AURA", "player")
+        stub.runTimers()
+        emit({ bar:GetWidth() == math.ceil(bar.empty:GetStringWidth()) + 14, bar:GetHeight(), bar.empty:IsShown() })
+    `);
+    assert.deepEqual(titled, [true, 74]);
+    assert.deepEqual(compact, [54, 62]);
+    assert.deepEqual(wrapped, [383, 109]);
+    assert.deepEqual(combat, wrapped);
+    assert.deepEqual(active, [54, 62, '0']);
+    assert.deepEqual(empty, [true, 36, true]);
+});
+
 test('consumables UI: picker survives bag refreshes and item-cache events until a selection is made', () => {
     const [open, refreshed, mapped] = integration(`
         local b = ns.Buttons[1]

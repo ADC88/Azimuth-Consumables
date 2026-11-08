@@ -11,6 +11,7 @@ Extract `AzimuthConsumables.zip` directly into your game's `Interface/AddOns` di
 The bar and effect picker use Expressway Regular when it is registered through LibSharedMedia or available from EllesmereUI. WoW's default fonts are used if Expressway cannot be loaded.
 
 - Type `/azc` or right-click the bar header to open Settings. Adjust bar size, lock its position, hide the title, and choose separate colors for the background and missing-effect glow. The header still accepts clicks and drags when the title is hidden.
+- The bar fits its tracked icons and wraps after eight per row. A visible title sets the minimum width. Hiding the title leaves a small drag and settings handle. Layout changes apply after combat.
 - Add an item ID or item link to the blacklist, or Shift-right-click an icon. Use **Remove** beside an entry to restore that item. The blacklist is account-wide.
 - **Hide food and drink that only restore health or mana** is enabled by default. It recognizes standard English recovery tooltips and keeps buff food, manually mapped items and items with unclear or localized tooltips visible. Uncheck it to show recovery food.
 

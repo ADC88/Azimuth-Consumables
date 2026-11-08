@@ -10,6 +10,7 @@ local weapons = { effects = {}, readable = false }
 local pendingWeapon, layoutSignature, appliedGlow
 local queueLayout
 local SIZE, GAP, COLUMNS = 40, 7, 8
+local HEADER_HEIGHT, HANDLE_HEIGHT = 24, 12
 local EXPRESSWAY = [[Interface\AddOns\EllesmereUI\media\fonts\Expressway.TTF]]
 local FOOD_AND_DRINK = 5
 local BACKGROUND, GLOW = { 0.025, 0.04, 0.06 }, { 1, 0.72, 0.16 }
@@ -344,7 +345,7 @@ rebuild = function()
     -- Keep picker contents stable while bag/item-data events arrive. Rebuilding
     -- the bar must not close or repurpose a row the player is about to click.
     local p = char.position or { "CENTER", "CENTER", 0, -200 }
-    local signatureParts = { tostring(db.scale), tostring(db.disabled), table.concat(p, ":") }
+    local signatureParts = { tostring(db.scale), tostring(db.disabled), tostring(db.hideTitle), table.concat(p, ":") }
     for _, item in ipairs(items) do signatureParts[#signatureParts + 1] = tostring(item.id) end
     local signature = table.concat(signatureParts, "|")
     if signature == layoutSignature then
@@ -353,25 +354,40 @@ rebuild = function()
         return
     end
     layoutSignature = signature
-    local width = math.max(240, math.min(#items, COLUMNS) * (SIZE + GAP) + GAP)
-    bar:SetSize(width, 28 + math.max(1, math.ceil(#items / COLUMNS)) * (SIZE + GAP))
+    local headerHeight = db.hideTitle and HANDLE_HEIGHT or HEADER_HEIGHT
+    local itemTop = headerHeight + 3
+    local columns = math.min(#items, COLUMNS)
+    local rows = math.ceil(#items / COLUMNS)
+    local width = columns * (SIZE + GAP) + GAP
+    if not db.hideTitle then width = math.max(width, math.ceil(bar.title:GetStringWidth()) + 16) end
+    local height = itemTop + rows * (SIZE + GAP)
+    if rows == 0 then
+        width = math.max(width, math.ceil(bar.empty:GetStringWidth()) + 2 * GAP)
+        height = headerHeight + 10 + 2 * GAP
+    end
+    bar.header:SetHeight(headerHeight)
+    bar:SetSize(width, height)
     bar:ClearAllPoints()
     bar:SetPoint(p[1], UIParent, p[2], p[3], p[4])
     bar:SetScale(db.scale)
     for i, item in ipairs(items) do
         local b = buttons[i]
         if not b then b = newButton(); buttons[i] = b end
+        if not b.item or b.item.id ~= item.id then b:SetAttribute("item1", "item:" .. item.id) end
         b.item = item
-        b:SetAttribute("item1", "item:" .. item.id)
         b.icon:SetTexture(item.icon or 134400)
         b:ClearAllPoints()
-        b:SetPoint("TOPLEFT", GAP + ((i - 1) % COLUMNS) * (SIZE + GAP), -27 - math.floor((i - 1) / COLUMNS) * (SIZE + GAP))
+        b:SetPoint("TOPLEFT", GAP + ((i - 1) % COLUMNS) * (SIZE + GAP),
+            -itemTop - math.floor((i - 1) / COLUMNS) * (SIZE + GAP))
         b:Show()
     end
     for i = #items + 1, #buttons do
-        buttons[i]:SetAttribute("item1", nil)
-        buttons[i].item = nil
-        buttons[i]:Hide()
+        local b = buttons[i]
+        if b.item then
+            b:SetAttribute("item1", nil)
+            b.item = nil
+            b:Hide()
+        end
     end
     bar.empty:SetShown(#items == 0)
     bar:SetShown(not db.disabled)
@@ -415,7 +431,8 @@ local function initialize()
     bar:SetClampedToScreen(true)
     bar:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8" })
     local header = CreateFrame("Button", nil, bar)
-    header:SetPoint("TOPLEFT"); header:SetPoint("TOPRIGHT"); header:SetHeight(24)
+    bar.header = header
+    header:SetPoint("TOPLEFT"); header:SetPoint("TOPRIGHT"); header:SetHeight(HEADER_HEIGHT)
     header:RegisterForDrag("LeftButton")
     header:RegisterForClicks("RightButtonUp")
     header:SetScript("OnClick", function() if ns.OpenOptions then ns.OpenOptions() end end)
@@ -430,8 +447,8 @@ local function initialize()
     end
     header:SetScript("OnDragStop", stopDrag)
     ns.StopDrag = stopDrag
-    bar.empty = label(bar, 10, "BOTTOMLEFT", 8, 12)
-    bar.empty:SetText("No matching consumables. /azc opens settings.")
+    bar.empty = label(bar, 10, "BOTTOMLEFT", GAP, GAP)
+    bar.empty:SetText("No items")
     local elapsed = 0
     bar:SetScript("OnUpdate", function(_, dt)
         elapsed = elapsed + dt
