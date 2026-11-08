@@ -332,6 +332,7 @@ rebuild = function()
         end
     end
     if combat() then paint(); return end
+    bar.title:SetShown(not db.hideTitle)
     local background = db.backgroundColor
     bar:SetBackdropColor(background[1], background[2], background[3], 0.88)
     if appliedGlow ~= db.glowColor then
@@ -418,7 +419,8 @@ local function initialize()
     header:RegisterForDrag("LeftButton")
     header:RegisterForClicks("RightButtonUp")
     header:SetScript("OnClick", function() if ns.OpenOptions then ns.OpenOptions() end end)
-    label(header, 11, "LEFT", 8, 0):SetText("|cff61d9c4AZIMUTH|r  Consumables")
+    bar.title = label(header, 11, "LEFT", 8, 0)
+    bar.title:SetText("|cff61d9c4AZIMUTH|r  Consumables")
     header:SetScript("OnDragStart", function() if not combat() and not db.locked then bar:StartMoving() end end)
     local function stopDrag()
         if combat() then return end

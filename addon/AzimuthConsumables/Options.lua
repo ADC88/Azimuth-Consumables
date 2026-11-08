@@ -14,9 +14,9 @@ function ns.RegisterOptions(db, apply, label)
     local panel = CreateFrame("Frame", "AzimuthConsumablesOptions")
     label(panel, 20, "TOPLEFT", 16, -16):SetText("Azimuth Consumables")
 
-    local function checkbox(text, key, y)
+    local function checkbox(text, key, y, x)
         local control = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
-        control:SetPoint("TOPLEFT", 14, y)
+        control:SetPoint("TOPLEFT", x or 14, y)
         label(control, 12, "LEFT", 32, 0):SetText(text)
         control:SetScript("OnClick", function(self)
             db[key] = self:GetChecked()
@@ -26,6 +26,7 @@ function ns.RegisterOptions(db, apply, label)
     end
 
     local locked = checkbox("Lock bar position", "locked", -49)
+    local hideTitle = checkbox("Hide bar title", "hideTitle", -49, 202)
     local exclude = checkbox("Hide food and drink that only restore health or mana", "excludeRecoveryFood", -85)
 
     local size = label(panel, 12, "TOPLEFT", 16, -128)
@@ -80,6 +81,7 @@ function ns.RegisterOptions(db, apply, label)
 
     local function refresh()
         locked:SetChecked(db.locked)
+        hideTitle:SetChecked(db.hideTitle)
         exclude:SetChecked(db.excludeRecoveryFood)
         size:SetText(("Bar size: %d%%"):format(math.floor(db.scale * 100 + 0.5)))
         background:SetColorTexture(unpack(db.backgroundColor))

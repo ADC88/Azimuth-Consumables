@@ -117,17 +117,22 @@ function integration(script, before = '') {
     ` }).emitted;
 }
 
-test('consumables UI: settings apply scale, lock, colors and blacklist entries', () => {
-    const [category, saved, hidden, shown] = integration(`
+test('consumables UI: settings apply scale, lock, title visibility, colors and blacklist entries', () => {
+    const [category, saved, hidden, shown, title] = integration(`
         SlashCmdList.AZIMUTHCONSUMABLES("")
         emit(stub.openedCategory)
         local panel = AzimuthConsumablesOptions
-        local input
+        local input, hideTitle
         for _, control in ipairs(panel.children) do
             if control:GetObjectType() == "EditBox" then input = control end
-            if control:GetObjectType() == "CheckButton" and not AzimuthConsumablesDB.locked then
-                control:SetChecked(true)
-                control:Click()
+            if control:GetObjectType() == "CheckButton" then
+                local name = control.regions[1]:GetText()
+                if name == "Lock bar position" then
+                    control:SetChecked(true)
+                    control:Click()
+                elseif name == "Hide bar title" then
+                    hideTitle = control
+                end
             end
             if control:GetText() == "+" then control:Click() end
             if control:GetText() == "Missing-effect glow" then control:Click() end
@@ -143,11 +148,22 @@ test('consumables UI: settings apply scale, lock, colors and blacklist entries',
             if frame:GetText() == "Remove" then frame:Click(); break end
         end
         emit({ AzimuthConsumablesDB.hidden[1] == nil, ns.Buttons[1]:IsShown() })
+        local bar = AzimuthConsumablesBar
+        local originallyShown = bar.title:IsShown()
+        hideTitle:SetChecked(true)
+        hideTitle:Click()
+        local hiddenTitle = AzimuthConsumablesDB.hideTitle and not bar.title:IsShown()
+        stub.openedCategory = nil
+        bar.title:GetParent():Click("RightButton")
+        hideTitle:SetChecked(false)
+        hideTitle:Click()
+        emit({ originallyShown, hiddenTitle, stub.openedCategory, bar.title:IsShown() })
     `);
     assert.equal(category, 'Azimuth Consumables');
     assert.deepEqual(saved, [1.05, 1.05, true, [0.1, 0.2, 0.3]]);
     assert.deepEqual(hidden, [true, false]);
     assert.deepEqual(shown, [true, true]);
+    assert.deepEqual(title, [true, true, 'Azimuth Consumables', true]);
 });
 
 test('consumables UI: filters plain food while retaining buff food, uncertain food and manual mappings', () => {
