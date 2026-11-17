@@ -13,6 +13,7 @@ local SIZE, GAP, COLUMNS = 40, 7, 8
 local HEADER_HEIGHT, HANDLE_HEIGHT = 24, 12
 local EXPRESSWAY = [[Interface\AddOns\EllesmereUI\media\fonts\Expressway.TTF]]
 local FOOD_AND_DRINK = 5
+local BATTLE_SHOUT_RANKS = { 25289, 11551, 11550, 11549, 6192, 5242, 6673 }
 local BACKGROUND, GLOW = { 0.025, 0.04, 0.06 }, { 1, 0.72, 0.16 }
 local locale = GetLocale()
 local englishTooltips = locale == "enUS" or locale == "enGB"
@@ -89,7 +90,7 @@ local function scanBags()
                         C_Item.RequestLoadItemDataByID(id)
                     end
                 end
-                if cached.classID == 0 or db.mappings[id] then
+                if id == M.SleepingBag or cached.classID == 0 or db.mappings[id] then
                     if englishTooltips and db.excludeRecoveryFood and cached.classID == 0 and cached.subClassID == FOOD_AND_DRINK
                         and cached.spellID and cached.recoveryFood == nil then
                         cached.recoveryFood = recoveryFood(id)
@@ -107,6 +108,20 @@ local function scanBags()
     end
     items, itemByID = M.Items(slots, db), {}
     for _, item in ipairs(items) do itemByID[item.id] = item end
+    local isKnown = C_SpellBook and C_SpellBook.IsSpellKnown or IsPlayerSpell
+    if isKnown and C_Spell then
+        for _, id in ipairs(BATTLE_SHOUT_RANKS) do
+            if isKnown(id) then
+                local info = C_Spell.GetSpellInfo(id)
+                if not info then break end
+                local shout = { id = -6673, count = 1, castSpell = id,
+                    spellID = id, spellName = info.name, icon = info.iconID }
+                items[#items + 1] = shout
+                itemByID[shout.id] = shout
+                break
+            end
+        end
+    end
 end
 
 local function setTextFont(text, size, flags, fallback)
@@ -255,9 +270,18 @@ local function newButton()
     b.time = label(b, 10, "BOTTOM", 0, 2)
     b:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetItemByID(self.item.id)
-        GameTooltip:AddLine("Left-click: use. Right-click: link active buff.", 0.4, 1, 0.8, true)
-        GameTooltip:AddLine("Shift-right-click: hide this item. /azc restore to restore.", 0.7, 0.7, 0.7, true)
+        if self.item.castSpell then
+            GameTooltip:SetSpellByID(self.item.castSpell)
+            GameTooltip:AddLine("Left-click: cast Battle Shout.", 0.4, 1, 0.8, true)
+        else
+            GameTooltip:SetItemByID(self.item.id)
+            if self.item.id == M.SleepingBag then
+                GameTooltip:AddLine("Left-click to deploy when ready and Well-Rested has under five minutes left or is missing.", 0.4, 1, 0.8, true)
+            else
+                GameTooltip:AddLine("Left-click: use. Right-click: link active buff.", 0.4, 1, 0.8, true)
+            end
+            GameTooltip:AddLine("Shift-right-click: hide this item. /azc restore to restore.", 0.7, 0.7, 0.7, true)
+        end
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -279,12 +303,12 @@ local function newButton()
             end
             return
         end
-        if mouse ~= "RightButton" then return end
+        if mouse ~= "RightButton" or self.item.castSpell then return end
         if IsShiftKeyDown() then
             db.hidden[self.item.id] = true
             rebuild()
             if ns.RefreshOptions then ns.RefreshOptions() end
-        else
+        elseif self.item.id ~= M.SleepingBag then
             openPicker(self.item)
         end
     end)
@@ -298,15 +322,30 @@ local function paint()
             local current = itemByID[b.item.id]
             local item = current or b.item
             local start, duration, enabled = 0, 0, 1
-            if C_Container.GetItemCooldown then start, duration, enabled = C_Container.GetItemCooldown(item.id) end
+            if not item.castSpell and C_Container.GetItemCooldown then
+                start, duration, enabled = C_Container.GetItemCooldown(item.id)
+            end
             start, duration, enabled = read(start) or 0, read(duration) or 0, read(enabled)
             item.cooldownEnd = duration > 1.5 and start + duration or nil
             local state = M.State(item, auras, db, now, auraReadable, weapons)
-            b.count:SetText(current and current.count or 0)
+            b.count:SetText(item.castSpell and "" or (current and current.count or 0))
             b.time:SetText(state.text)
             b.time:SetTextColor(state.active and 0.4 or 1, state.active and 1 or 0.85, state.active and 0.65 or 0.4)
-            b.glow:SetAlpha(state.glow and (0.55 + 0.45 * math.sin(now * 4) ^ 2) or 0)
-            local usable = C_Item.IsUsableItem(item.id)
+            local usable
+            if item.castSpell then
+                usable = C_Spell.IsSpellUsable(item.castSpell)
+            else
+                usable = C_Item.IsUsableItem(item.id)
+            end
+            local glow = state.glow
+            if item.id == M.SleepingBag then
+                glow = glow and current and current.count > 0 and enabled ~= 0 and read(usable)
+                if not combat() then
+                    local action = glow and "item" or nil
+                    if b:GetAttribute("type1") ~= action then b:SetAttribute("type1", action) end
+                end
+            end
+            b.glow:SetAlpha(glow and (0.55 + 0.45 * math.sin(now * 4) ^ 2) or 0)
             b.icon:SetDesaturated(not current or item.count == 0 or enabled == 0 or not read(usable))
             if duration > 1.5 then b.cooldown:SetCooldown(start, duration) else b.cooldown:Clear() end
             if item.count == 0 and not state.active and queueLayout and not combat() then queueLayout() end
@@ -322,7 +361,7 @@ rebuild = function()
     -- zero count until the effect expires. It then leaves the bar out of combat.
     for _, button in ipairs(buttons) do
         local previous = button.item
-        if previous and not M.IsExcluded(metadata[previous.id] or previous, db)
+        if previous and not previous.castSpell and not M.IsExcluded(metadata[previous.id] or previous, db)
             and not itemByID[previous.id]
             and M.Effect(previous, auras, db, GetTime(), weapons) then
             local tracked = {}
@@ -346,7 +385,7 @@ rebuild = function()
     -- the bar must not close or repurpose a row the player is about to click.
     local p = char.position or { "CENTER", "CENTER", 0, -200 }
     local signatureParts = { tostring(db.scale), tostring(db.disabled), tostring(db.hideTitle), table.concat(p, ":") }
-    for _, item in ipairs(items) do signatureParts[#signatureParts + 1] = tostring(item.id) end
+    for _, item in ipairs(items) do signatureParts[#signatureParts + 1] = tostring(item.castSpell or item.id) end
     local signature = table.concat(signatureParts, "|")
     if signature == layoutSignature then
         for _, b in ipairs(buttons) do if b.item and itemByID[b.item.id] then b.item = itemByID[b.item.id] end end
@@ -373,7 +412,11 @@ rebuild = function()
     for i, item in ipairs(items) do
         local b = buttons[i]
         if not b then b = newButton(); buttons[i] = b end
-        if not b.item or b.item.id ~= item.id then b:SetAttribute("item1", "item:" .. item.id) end
+        if not b.item or b.item.id ~= item.id or b.item.castSpell ~= item.castSpell then
+            b:SetAttribute("type1", item.castSpell and "spell" or "item")
+            b:SetAttribute("spell1", item.castSpell)
+            b:SetAttribute("item1", not item.castSpell and ("item:" .. item.id) or nil)
+        end
         b.item = item
         b.icon:SetTexture(item.icon or 134400)
         b:ClearAllPoints()
@@ -509,7 +552,7 @@ end
 local events = CreateFrame("Frame")
 for _, event in ipairs({ "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
     "BAG_UPDATE_DELAYED", "BAG_UPDATE_COOLDOWN", "UNIT_AURA", "UNIT_INVENTORY_CHANGED",
-    "PLAYER_EQUIPMENT_CHANGED", "ITEM_DATA_LOAD_RESULT", "GET_ITEM_INFO_RECEIVED" }) do
+    "PLAYER_EQUIPMENT_CHANGED", "ITEM_DATA_LOAD_RESULT", "GET_ITEM_INFO_RECEIVED", "SPELLS_CHANGED" }) do
     events:RegisterEvent(event)
 end
 local scheduled = false

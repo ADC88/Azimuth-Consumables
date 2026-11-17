@@ -117,6 +117,52 @@ function integration(script, before = '') {
     ` }).emitted;
 }
 
+test('consumables UI: sleeping bag tracks Well-Rested and enables deployment below five minutes', () => {
+    const [ready, boundary, refresh, cooldown] = integration(`
+        local b = ns.Buttons[1]
+        emit(b:GetAttribute("type1") == "item" and b:GetAttribute("item1") == "item:211527")
+        buffs = { { spellId = 429959, name = "Well-Rested", expirationTime = 300 } }
+        stub.fire("UNIT_AURA", "player")
+        emit({ b.time:GetText(), b:GetAttribute("type1") == nil, b.glow:GetAlpha() })
+        buffs[1].expirationTime = 299
+        stub.fire("UNIT_AURA", "player")
+        emit({ b.time:GetText(), b:GetAttribute("type1"), b.glow:GetAlpha() > 0 })
+        C_Container.GetItemCooldown = function() return 0, 3600, 1 end
+        stub.fire("BAG_UPDATE_COOLDOWN")
+        emit({ b:GetAttribute("type1") == nil, b.glow:GetAlpha() })
+    `, `
+        slots = { { itemID = 211527, stackCount = 1 } }
+        C_Item.GetItemInfoInstant = function() return 211527, "Miscellaneous", "Other", "", 123, 15, 0 end
+    `);
+    assert.equal(ready, true);
+    assert.deepEqual(boundary, ['5:00', true, 0]);
+    assert.deepEqual(refresh, ['4:59', 'item', true]);
+    assert.deepEqual(cooldown, [true, 0]);
+});
+
+test('consumables UI: Battle Shout casts the highest known rank and tracks the group buff', () => {
+    const [missing, active, removed] = integration(`
+        local b = ns.Buttons[2]
+        emit({ b:GetAttribute("type1"), b:GetAttribute("spell1"), b.time:GetText(), b.count:GetText() })
+        buffs = { { spellId = 6673, name = "Battle Shout", expirationTime = 120 } }
+        stub.fire("UNIT_AURA", "player")
+        emit({ b.time:GetText(), b.glow:GetAlpha() })
+        C_SpellBook.IsSpellKnown = function() return false end
+        stub.fire("SPELLS_CHANGED")
+        stub.runTimers()
+        emit(b:IsShown())
+    `, `
+        C_SpellBook = { IsSpellKnown = function(id) return id == 6673 or id == 6192 end }
+        C_Spell = {
+            GetSpellInfo = function() return { name = "Battle Shout", iconID = 123 } end,
+            IsSpellUsable = function() return true end,
+        }
+    `);
+    assert.deepEqual(missing, ['spell', 6192, 'READY', '']);
+    assert.deepEqual(active, ['2:00', 0]);
+    assert.equal(removed, false);
+});
+
 test('consumables UI: settings apply scale, lock, title visibility, colors and blacklist entries', () => {
     const [category, saved, hidden, shown, title] = integration(`
         SlashCmdList.AZIMUTHCONSUMABLES("")

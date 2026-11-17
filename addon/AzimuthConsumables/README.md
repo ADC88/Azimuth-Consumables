@@ -18,6 +18,8 @@ The bar and effect picker use Expressway Regular when it is registered through L
 - Left-click an icon to use that consumable. Duplicate bag stacks share one icon and combined count.
 - A pulsing gold outline means the tracked effect is missing. A green countdown shows how long the active effect has left.
 - `CD` means the item's reuse cooldown. The swipe also shows reuse cooldown; it is separate from the active-effect timer.
+- Carrying a Cozy Sleeping Bag adds its Well-Rested timer to the bar. Outside combat, the bag lights up and becomes clickable when it is ready and the buff is missing or has less than five minutes left. Click to deploy the bag, then rest in it to refresh the buff.
+- Characters who know Battle Shout get a clickable spell icon for their highest learned rank. It shows the active Battle Shout timer and glows when the buff is missing.
 - An active effect without a readable expiration is labeled `ACTIVE`. `?` means the client restricts aura information; it does not trigger a false missing-buff glow.
 - Drag the header to move the bar. `/azc lock` locks it; `/azc unlock` unlocks it.
 - Right-click an icon to link it to one of your **currently active buffs or weapon enchants**. The picker stays open through bag and item-cache refreshes; it closes when you select an effect, press Escape, use its close button or enter combat. Choose **Automatic matching (reset)** to remove a manual override.
