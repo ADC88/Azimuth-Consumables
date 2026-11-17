@@ -109,19 +109,22 @@ local function scanBags()
     items, itemByID = M.Items(slots, db), {}
     for _, item in ipairs(items) do itemByID[item.id] = item end
     local isKnown = C_SpellBook and C_SpellBook.IsSpellKnown or IsPlayerSpell
-    if isKnown and C_Spell then
-        for _, id in ipairs(BATTLE_SHOUT_RANKS) do
-            if isKnown(id) then
-                local info = C_Spell.GetSpellInfo(id)
-                if not info then break end
-                local shout = { id = -6673, count = 1, castSpell = id,
-                    spellID = id, spellName = info.name, icon = info.iconID }
-                items[#items + 1] = shout
-                itemByID[shout.id] = shout
-                break
-            end
-        end
+    if not C_Spell then return end
+    local learnedRank
+    for _, id in ipairs(BATTLE_SHOUT_RANKS) do
+        if isKnown and isKnown(id) then learnedRank = id; break end
     end
+    if not learnedRank and db.hideUnavailableClassBuffs then return end
+    local info = C_Spell.GetSpellInfo(learnedRank or 6673)
+    if not info then return end
+    local shout = { id = -6673, count = 1, classBuff = true, castSpell = learnedRank,
+        spellID = learnedRank or 6673, spellName = info.name, icon = info.iconID }
+    if not learnedRank then
+        local _, class = UnitClass("player")
+        if class ~= "WARRIOR" and not M.Effect(shout, auras, db, GetTime(), weapons) then return end
+    end
+    items[#items + 1] = shout
+    itemByID[shout.id] = shout
 end
 
 local function setTextFont(text, size, flags, fallback)
@@ -270,13 +273,14 @@ local function newButton()
     b.time = label(b, 10, "BOTTOM", 0, 2)
     b:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        if self.item.castSpell then
-            GameTooltip:SetSpellByID(self.item.castSpell)
-            GameTooltip:AddLine("Left-click: cast Battle Shout.", 0.4, 1, 0.8, true)
+        if self.item.classBuff then
+            GameTooltip:SetSpellByID(self.item.spellID)
+            local hint = self.item.castSpell and "Left-click: cast Battle Shout." or "Battle Shout is unavailable to this loadout."
+            GameTooltip:AddLine(hint, 0.4, 1, 0.8, true)
         else
             GameTooltip:SetItemByID(self.item.id)
             if self.item.id == M.SleepingBag then
-                GameTooltip:AddLine("Left-click to deploy when ready and Well-Rested has under five minutes left or is missing.", 0.4, 1, 0.8, true)
+                GameTooltip:AddLine("Left-click to place the bag. Glow reminds you to refresh Well-Rested.", 0.4, 1, 0.8, true)
             else
                 GameTooltip:AddLine("Left-click: use. Right-click: link active buff.", 0.4, 1, 0.8, true)
             end
@@ -303,7 +307,7 @@ local function newButton()
             end
             return
         end
-        if mouse ~= "RightButton" or self.item.castSpell then return end
+        if mouse ~= "RightButton" or self.item.classBuff then return end
         if IsShiftKeyDown() then
             db.hidden[self.item.id] = true
             rebuild()
@@ -322,29 +326,29 @@ local function paint()
             local current = itemByID[b.item.id]
             local item = current or b.item
             local start, duration, enabled = 0, 0, 1
-            if not item.castSpell and C_Container.GetItemCooldown then
+            if not item.classBuff and C_Container.GetItemCooldown then
                 start, duration, enabled = C_Container.GetItemCooldown(item.id)
             end
             start, duration, enabled = read(start) or 0, read(duration) or 0, read(enabled)
             item.cooldownEnd = duration > 1.5 and start + duration or nil
             local state = M.State(item, auras, db, now, auraReadable, weapons)
-            b.count:SetText(item.castSpell and "" or (current and current.count or 0))
+            b.count:SetText(item.classBuff and "" or (current and current.count or 0))
+            if item.classBuff and not item.castSpell and not state.active then state.text = "N/A" end
             b.time:SetText(state.text)
             b.time:SetTextColor(state.active and 0.4 or 1, state.active and 1 or 0.85, state.active and 0.65 or 0.4)
             local usable
-            if item.castSpell then
-                usable = C_Spell.IsSpellUsable(item.castSpell)
+            if item.classBuff then
+                usable = item.castSpell and C_Spell.IsSpellUsable(item.castSpell)
+            elseif item.id == M.SleepingBag then
+                usable = not item.cooldownEnd or item.cooldownEnd <= now
             else
                 usable = C_Item.IsUsableItem(item.id)
             end
             local glow = state.glow
             if item.id == M.SleepingBag then
                 glow = glow and current and current.count > 0 and enabled ~= 0 and read(usable)
-                if not combat() then
-                    local action = glow and "item" or nil
-                    if b:GetAttribute("type1") ~= action then b:SetAttribute("type1", action) end
-                end
             end
+            if item.classBuff and not item.castSpell then glow = false end
             b.glow:SetAlpha(glow and (0.55 + 0.45 * math.sin(now * 4) ^ 2) or 0)
             b.icon:SetDesaturated(not current or item.count == 0 or enabled == 0 or not read(usable))
             if duration > 1.5 then b.cooldown:SetCooldown(start, duration) else b.cooldown:Clear() end
@@ -361,7 +365,7 @@ rebuild = function()
     -- zero count until the effect expires. It then leaves the bar out of combat.
     for _, button in ipairs(buttons) do
         local previous = button.item
-        if previous and not previous.castSpell and not M.IsExcluded(metadata[previous.id] or previous, db)
+        if previous and not previous.classBuff and not M.IsExcluded(metadata[previous.id] or previous, db)
             and not itemByID[previous.id]
             and M.Effect(previous, auras, db, GetTime(), weapons) then
             local tracked = {}
@@ -385,7 +389,10 @@ rebuild = function()
     -- the bar must not close or repurpose a row the player is about to click.
     local p = char.position or { "CENTER", "CENTER", 0, -200 }
     local signatureParts = { tostring(db.scale), tostring(db.disabled), tostring(db.hideTitle), table.concat(p, ":") }
-    for _, item in ipairs(items) do signatureParts[#signatureParts + 1] = tostring(item.castSpell or item.id) end
+    for _, item in ipairs(items) do
+        signatureParts[#signatureParts + 1] = tostring(item.id)
+        if item.classBuff then signatureParts[#signatureParts + 1] = "rank:" .. tostring(item.castSpell) end
+    end
     local signature = table.concat(signatureParts, "|")
     if signature == layoutSignature then
         for _, b in ipairs(buttons) do if b.item and itemByID[b.item.id] then b.item = itemByID[b.item.id] end end
@@ -413,9 +420,10 @@ rebuild = function()
         local b = buttons[i]
         if not b then b = newButton(); buttons[i] = b end
         if not b.item or b.item.id ~= item.id or b.item.castSpell ~= item.castSpell then
-            b:SetAttribute("type1", item.castSpell and "spell" or "item")
+            local action = item.castSpell and "spell" or (not item.classBuff and "item" or nil)
+            b:SetAttribute("type1", action)
             b:SetAttribute("spell1", item.castSpell)
-            b:SetAttribute("item1", not item.castSpell and ("item:" .. item.id) or nil)
+            b:SetAttribute("item1", not item.classBuff and ("item:" .. item.id) or nil)
         end
         b.item = item
         b.icon:SetTexture(item.icon or 134400)
@@ -428,6 +436,8 @@ rebuild = function()
         local b = buttons[i]
         if b.item then
             b:SetAttribute("item1", nil)
+            b:SetAttribute("spell1", nil)
+            b:SetAttribute("type1", nil)
             b.item = nil
             b:Hide()
         end
@@ -469,6 +479,7 @@ local function initialize()
     db.backgroundColor = savedColor(db.backgroundColor, BACKGROUND)
     db.glowColor = savedColor(db.glowColor, GLOW)
     db.excludeRecoveryFood = db.excludeRecoveryFood ~= false
+    db.hideUnavailableClassBuffs = db.hideUnavailableClassBuffs ~= false
     bar = CreateFrame("Frame", "AzimuthConsumablesBar", UIParent, "BackdropTemplate")
     bar:SetMovable(true)
     bar:SetClampedToScreen(true)
@@ -552,7 +563,8 @@ end
 local events = CreateFrame("Frame")
 for _, event in ipairs({ "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
     "BAG_UPDATE_DELAYED", "BAG_UPDATE_COOLDOWN", "UNIT_AURA", "UNIT_INVENTORY_CHANGED",
-    "PLAYER_EQUIPMENT_CHANGED", "ITEM_DATA_LOAD_RESULT", "GET_ITEM_INFO_RECEIVED", "SPELLS_CHANGED" }) do
+    "PLAYER_EQUIPMENT_CHANGED", "ITEM_DATA_LOAD_RESULT", "GET_ITEM_INFO_RECEIVED", "SPELLS_CHANGED",
+    "PLAYER_SPECIALIZATION_CHANGED" }) do
     events:RegisterEvent(event)
 end
 local scheduled = false
@@ -572,7 +584,11 @@ events:SetScript("OnEvent", function(_, event, unit, success)
         -- Starting combat automatically stops protected layout changes.
     elseif event == "UNIT_AURA" then
         if secret(unit) then return end
-        if unit == "player" then scanAuras(); paint() end
+        if unit == "player" then
+            scanAuras()
+            paint()
+            if not db.hideUnavailableClassBuffs then rebuildSoon() end
+        end
     elseif event == "BAG_UPDATE_COOLDOWN" then paint()
     elseif event == "ITEM_DATA_LOAD_RESULT" or event == "GET_ITEM_INFO_RECEIVED" then
         -- Ignore unrelated item-cache activity. A completed request is removed
