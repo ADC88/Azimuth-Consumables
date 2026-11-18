@@ -109,7 +109,7 @@ local function scanBags()
     items, itemByID = M.Items(slots, db), {}
     for _, item in ipairs(items) do itemByID[item.id] = item end
     local isKnown = C_SpellBook and C_SpellBook.IsSpellKnown or IsPlayerSpell
-    if not C_Spell then return end
+    if db.hideClassBuffs or not C_Spell then return end
     local learnedRank
     for _, id in ipairs(BATTLE_SHOUT_RANKS) do
         if isKnown and isKnown(id) then learnedRank = id; break end

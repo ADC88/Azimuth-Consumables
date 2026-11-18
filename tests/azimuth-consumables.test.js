@@ -142,7 +142,7 @@ test('consumables UI: sleeping bag stays clickable while the five-minute reminde
 });
 
 test('consumables UI: Battle Shout casts the highest known rank and tracks the group buff', () => {
-    const [missing, active, removed, tracked, restored] = integration(`
+    const [missing, active, removed, tracked, restored, hiddenAll, shownAgain] = integration(`
         local b = ns.Buttons[2]
         emit({ b:GetAttribute("type1"), b:GetAttribute("spell1"), b.time:GetText(), b.count:GetText() })
         buffs = { { spellId = 6673, name = "Battle Shout", expirationTime = 120 } }
@@ -165,6 +165,17 @@ test('consumables UI: Battle Shout casts the highest known rank and tracks the g
         stub.fire("PLAYER_SPECIALIZATION_CHANGED", "player")
         stub.runTimers()
         emit({ b:GetAttribute("type1"), b:GetAttribute("spell1") })
+        local toggle
+        for _, control in ipairs(AzimuthConsumablesOptions.children) do
+            if control:GetObjectType() == "CheckButton"
+                and control.regions[1]:GetText() == "Hide class buffs" then toggle = control; break end
+        end
+        toggle:SetChecked(true)
+        toggle:Click()
+        emit({ not b:IsShown(), b:GetAttribute("spell1") == nil, ns.Buttons[1]:IsShown(), AzimuthConsumablesDB.hideClassBuffs })
+        toggle:SetChecked(false)
+        toggle:Click()
+        emit({ b:IsShown(), b:GetAttribute("spell1") })
     `, `
         UnitClass = function() return "Warrior", "WARRIOR" end
         C_SpellBook = { IsSpellKnown = function(id) return id == 6673 or id == 6192 end }
@@ -178,6 +189,8 @@ test('consumables UI: Battle Shout casts the highest known rank and tracks the g
     assert.equal(removed, false);
     assert.deepEqual(tracked, [true, '2:00', true, true]);
     assert.deepEqual(restored, ['spell', 5242]);
+    assert.deepEqual(hiddenAll, [true, true, true, true]);
+    assert.deepEqual(shownAgain, [true, 5242]);
 });
 
 test('consumables UI: settings apply scale, lock, title visibility, colors and blacklist entries', () => {
