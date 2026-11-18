@@ -12,7 +12,7 @@ The bar and effect picker use Expressway Regular when it is registered through L
 
 - Type `/azc` or right-click the bar header to open Settings. Adjust bar size, lock its position, hide the title, and choose separate colors for the background and missing-effect glow. The header still accepts clicks and drags when the title is hidden.
 - The bar fits its tracked icons and wraps after eight per row. A visible title sets the minimum width. Hiding the title leaves a small drag and settings handle. Layout changes apply after combat.
-- Add an item ID or item link to the blacklist, or Shift-right-click an icon. Use **Remove** beside an entry to restore that item. The blacklist is account-wide.
+- Add an item ID or item link to the blacklist, or Shift-right-click an icon. Use **Remove** beside an entry to restore that item. The blacklist follows your active profile.
 - **Hide food and drink that only restore health or mana** is enabled by default. It recognizes standard English recovery tooltips and keeps buff food, manually mapped items and items with unclear or localized tooltips visible. Uncheck it to show recovery food.
 
 - Left-click an icon to use that consumable. Duplicate bag stacks share one icon and combined count.
@@ -24,7 +24,16 @@ The bar and effect picker use Expressway Regular when it is registered through L
 - Mutually exclusive armors, aspects, shields, blessings, auras, seals and imbues share a slot that follows the active choice. If none is active, the first learned choice in the class list is offered.
 - Shaman weapon-imbue matching learns the exact enchant after a successful cast through the bar. Reapply once through the bar to link an existing imbue. If multiple enchants change together, it waits for an unambiguous application.
 - **Hide unavailable class buffs** is enabled by default. Turn it off to see unlearned maintenance buffs for your class or tracked buffs applied by other players.
-- Enable **Hide class buffs** in Settings to hide the class spell icons. Both visibility settings are account-wide. Changes to protected buttons apply after combat.
+- Enable **Hide class buffs** in Settings to hide the class spell icons. Both visibility settings follow your active profile. Changes to protected buttons apply after combat.
+
+## Buff choices, reminders and profiles
+
+Open `/azc` and choose **Class buffs**, **Reminders** or **Profiles**.
+
+- **Class buffs** lets you enable each buff family individually. Select **Prefer** beside an armor, aspect, aura or other exclusive choice to offer it when the slot has no active buff. An active enabled alternative continues to occupy that slot. Use the seconds box for a buff-specific refresh reminder.
+- **Reminders** sets the default refresh threshold and overrides for individual consumable item IDs or links. Values are seconds, from 0 to 3600. Zero means remind when missing; a blank override inherits the default. The sleeping bag keeps its 300-second default unless you override it. Buffs with an unreadable duration suppress early-refresh reminders.
+- **Profiles** chooses shared, character or spec settings. Existing settings become the shared profile. New character and spec profiles copy shared settings once, then save buff choices, reminders, colors, size and blacklists independently. Character and spec profiles also save their own position. Shared profiles retain each character's existing position.
+- **Copy shared settings into this profile** replaces the current character or spec settings with a fresh copy of shared settings. Profile and layout switches wait until combat ends.
 - An active effect without a readable expiration is labeled `ACTIVE`. `?` means the client restricts aura information; it does not trigger a false missing-buff glow.
 - Drag the header to move the bar. `/azc lock` locks it; `/azc unlock` unlocks it.
 - Right-click an icon to link it to one of your **currently active buffs or weapon enchants**. The picker stays open through bag and item-cache refreshes; it closes when you select an effect, press Escape, use its close button or enter combat. Choose **Automatic matching (reset)** to remove a manual override.
@@ -49,7 +58,7 @@ Automatic matching uses the item's spell ID or localized spell name against your
 /azc map ITEM_ID either
 ```
 
-Multiple IDs mean alternative effects; the longest matching remaining effect is shown. Buff mappings and hidden items are account-wide; position is per character.
+Multiple IDs mean alternative effects; the longest matching remaining effect is shown. Buff mappings and hidden items follow your active profile.
 
 ## Sharpening stones and weapon enchants
 

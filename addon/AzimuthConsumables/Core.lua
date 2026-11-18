@@ -2,13 +2,13 @@ local ADDON, ns = ...
 local unpack = unpack or table.unpack
 local M = ns.Model
 local W = ns.Weapons
-local db, char, bar, picker
+local db, char, account, positionStore, bar, picker
 local buttons, items, itemByID, auras = {}, {}, {}, {}
 local auraReadable, initialized = true, false
 local requested, metadata = {}, {}
 local weapons = { effects = {}, readable = false }
 local pendingWeapon, pendingClassWeapon, layoutSignature, appliedGlow
-local queueLayout
+local queueLayout, activateProfile
 local SIZE, GAP, COLUMNS = 40, 7, 8
 local HEADER_HEIGHT, HANDLE_HEIGHT = 24, 12
 local EXPRESSWAY = [[Interface\AddOns\EllesmereUI\media\fonts\Expressway.TTF]]
@@ -367,6 +367,7 @@ end
 
 rebuild = function()
     if not initialized then return end
+    if not combat() then activateProfile() end
     pollWeapons()
     scanBags()
     -- Keep an active timer after consuming the last copy; show a dim icon and
@@ -395,7 +396,7 @@ rebuild = function()
     end
     -- Keep picker contents stable while bag/item-data events arrive. Rebuilding
     -- the bar must not close or repurpose a row the player is about to click.
-    local p = char.position or { "CENTER", "CENTER", 0, -200 }
+    local p = positionStore.position or { "CENTER", "CENTER", 0, -200 }
     local signatureParts = { tostring(db.scale), tostring(db.disabled), tostring(db.hideTitle), table.concat(p, ":") }
     for _, item in ipairs(items) do
         signatureParts[#signatureParts + 1] = tostring(item.id)
@@ -466,11 +467,7 @@ local function savedColor(value, fallback)
     return color
 end
 
-local function initialize()
-    if initialized or combat() then return end
-    AzimuthConsumablesDB = type(AzimuthConsumablesDB) == "table" and AzimuthConsumablesDB or {}
-    AzimuthConsumablesCharDB = type(AzimuthConsumablesCharDB) == "table" and AzimuthConsumablesCharDB or {}
-    db, char = AzimuthConsumablesDB, AzimuthConsumablesCharDB
+local function normalizeSettings()
     db.hidden = type(db.hidden) == "table" and db.hidden or {}
     db.mappings = type(db.mappings) == "table" and db.mappings or {}
     db.weaponEnchants = type(db.weaponEnchants) == "table" and db.weaponEnchants or {}
@@ -480,16 +477,65 @@ local function initialize()
     for id, ids in pairs(db.weaponEnchants) do
         if type(ids) ~= "table" then db.weaponEnchants[id] = nil end
     end
-    local p = char.position
+    local p = positionStore.position
     local anchors = { CENTER = true, TOP = true, BOTTOM = true, LEFT = true, RIGHT = true,
         TOPLEFT = true, TOPRIGHT = true, BOTTOMLEFT = true, BOTTOMRIGHT = true }
     if type(p) ~= "table" or not anchors[p[1]] or not anchors[p[2]]
-        or type(p[3]) ~= "number" or type(p[4]) ~= "number" then char.position = nil end
+        or type(p[3]) ~= "number" or type(p[4]) ~= "number" then positionStore.position = nil end
     db.scale = M.Scale(db.scale)
     db.backgroundColor = savedColor(db.backgroundColor, BACKGROUND)
     db.glowColor = savedColor(db.glowColor, GLOW)
     db.excludeRecoveryFood = db.excludeRecoveryFood ~= false
     db.hideUnavailableClassBuffs = db.hideUnavailableClassBuffs ~= false
+    db.disabledBuffs = type(db.disabledBuffs) == "table" and db.disabledBuffs or {}
+    db.preferredBuffs = type(db.preferredBuffs) == "table" and db.preferredBuffs or {}
+    db.refreshThresholds = type(db.refreshThresholds) == "table" and db.refreshThresholds or {}
+    db.refreshDefault = M.RefreshSeconds(db.refreshDefault)
+end
+
+activateProfile = function()
+    local settings, positions, name = ns.Profiles.Resolve(account, char)
+    if settings == db and positionStore == positions then return end
+    if ns.CancelOptionsEditing then ns.CancelOptionsEditing() end
+    closePicker()
+    if ColorPickerFrame then ColorPickerFrame:Hide() end
+    db, positionStore = settings, positions
+    pendingWeapon, pendingClassWeapon, layoutSignature, appliedGlow = nil, nil, nil, nil
+    normalizeSettings()
+    ns.ProfileName = name
+    if ns.BindOptions then ns.BindOptions(db) end
+end
+
+ns.SetProfileMode = function(mode)
+    if mode ~= "shared" and mode ~= "character" and mode ~= "spec" then return end
+    char.profileMode = mode
+    rebuild()
+    if ns.RefreshOptions then ns.RefreshOptions() end
+end
+
+ns.CopySharedProfile = function()
+    if combat() then say("Copy profiles after leaving combat."); return end
+    if db == account then return end
+    if ns.CancelOptionsEditing then ns.CancelOptionsEditing() end
+    if ColorPickerFrame then ColorPickerFrame:Hide() end
+    local replacement = ns.Profiles.Copy(account)
+    replacement.position = char.position and CopyTable(char.position)
+    for key in pairs(db) do db[key] = nil end
+    for key, value in pairs(replacement) do db[key] = value end
+    normalizeSettings()
+    layoutSignature, appliedGlow = nil, nil
+    closePicker()
+    rebuild()
+    if ns.RefreshOptions then ns.RefreshOptions() end
+end
+
+local function initialize()
+    if initialized or combat() then return end
+    AzimuthConsumablesDB = type(AzimuthConsumablesDB) == "table" and AzimuthConsumablesDB or {}
+    AzimuthConsumablesCharDB = type(AzimuthConsumablesCharDB) == "table" and AzimuthConsumablesCharDB or {}
+    char = AzimuthConsumablesCharDB
+    account = AzimuthConsumablesDB
+    activateProfile()
     bar = CreateFrame("Frame", "AzimuthConsumablesBar", UIParent, "BackdropTemplate")
     bar:SetMovable(true)
     bar:SetClampedToScreen(true)
@@ -507,7 +553,7 @@ local function initialize()
         if combat() then return end
         bar:StopMovingOrSizing()
         local point, _, relPoint, x, y = bar:GetPoint()
-        char.position = { point, relPoint, x, y }
+        positionStore.position = { point, relPoint, x, y }
     end
     header:SetScript("OnDragStop", stopDrag)
     ns.StopDrag = stopDrag
@@ -519,6 +565,8 @@ local function initialize()
         if elapsed >= 0.2 then elapsed = 0; pollWeapons(); paint() end
     end)
     initialized = true
+    ns.GetSettings = function() return db end
+    ns.GetCharacterSettings = function() return char end
     ns.RegisterOptions(db, rebuild, label)
     scanAuras()
     rebuild()
@@ -538,7 +586,7 @@ SlashCmdList.AZIMUTHCONSUMABLES = function(message)
     elseif command == "show" then db.disabled = false; rebuild()
     elseif command == "restore" then db.hidden = {}; rebuild()
     elseif command == "scale" and tonumber(args) then db.scale = M.Scale(args); rebuild()
-    elseif command == "reset" then char.position = nil; db.scale = 1; rebuild()
+    elseif command == "reset" then positionStore.position = nil; db.scale = 1; rebuild()
     elseif command == "map" then
         local idText, spells = args:match("^(%d+)%s+(.+)$")
         if not idText then say("/azc map ITEM_ID BUFF_ID [BUFF_ID ...], auto, main, off, or either"); return end
@@ -574,7 +622,7 @@ local events = CreateFrame("Frame")
 for _, event in ipairs({ "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
     "BAG_UPDATE_DELAYED", "BAG_UPDATE_COOLDOWN", "UNIT_AURA", "UNIT_INVENTORY_CHANGED",
     "PLAYER_EQUIPMENT_CHANGED", "ITEM_DATA_LOAD_RESULT", "GET_ITEM_INFO_RECEIVED", "SPELLS_CHANGED",
-    "PLAYER_SPECIALIZATION_CHANGED", "UNIT_SPELLCAST_SUCCEEDED" }) do
+    "PLAYER_SPECIALIZATION_CHANGED", "ACTIVE_TALENT_GROUP_CHANGED", "UNIT_SPELLCAST_SUCCEEDED" }) do
     events:RegisterEvent(event)
 end
 local scheduled = false

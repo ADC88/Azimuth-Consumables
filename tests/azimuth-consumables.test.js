@@ -110,6 +110,8 @@ function integration(script, before = '') {
         local ns = {}
         assert(loadfile("addon/AzimuthConsumables/Model.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/Weapons.lua"))("AzimuthConsumables", ns)
+        assert(loadfile("addon/AzimuthConsumables/Profiles.lua"))("AzimuthConsumables", ns)
+        assert(loadfile("addon/AzimuthConsumables/AdvancedOptions.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/Options.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/ClassBuffs.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/Core.lua"))("AzimuthConsumables", ns)
@@ -261,6 +263,154 @@ test('class weapon buffs learn an enchant only after their spell succeeds', () =
     `);
     assert.deepEqual(initial, [8232, 'player']);
     assert.deepEqual(learned, ['5:00', true]);
+});
+
+test('profiles preserve legacy settings and isolate character and spec changes through the settings buttons', () => {
+    const [legacy, character, shared, spec2, restored, combat, afterCombat] = integration(`
+        emit({ AzimuthConsumablesDB.scale, AzimuthConsumablesCharDB.position[3] })
+        local function choose(name)
+            for _, control in ipairs(AzimuthConsumablesProfiles.children) do
+                if control:GetText() == name then control:Click(); return end
+            end
+            error("Missing profile button")
+        end
+        choose("Character")
+        SlashCmdList.AZIMUTHCONSUMABLES("scale 1.4")
+        ns.GetSettings().hidden[1] = true
+        ns.Refresh()
+        emit({ ns.GetSettings().scale, AzimuthConsumablesDB.scale, not ns.Buttons[1]:IsShown() })
+        choose("Shared")
+        emit({ ns.GetSettings().scale, ns.Buttons[1]:IsShown(), AzimuthConsumablesDB.hidden[1] == nil })
+        choose("Spec")
+        SlashCmdList.AZIMUTHCONSUMABLES("scale 1.2")
+        spec = 2
+        stub.fire("PLAYER_SPECIALIZATION_CHANGED", "player")
+        stub.runTimers()
+        emit(ns.GetSettings().scale)
+        SlashCmdList.AZIMUTHCONSUMABLES("scale 1.6")
+        spec = 1
+        stub.fire("PLAYER_SPECIALIZATION_CHANGED", "player")
+        stub.runTimers()
+        emit(ns.GetSettings().scale)
+        stub.inCombat = true
+        choose("Character")
+        emit(ns.GetSettings().scale)
+        stub.inCombat = false
+        stub.fire("PLAYER_REGEN_ENABLED")
+        stub.runTimers()
+        emit({ ns.GetSettings().scale, not ns.Buttons[1]:IsShown() })
+    `, `
+        AzimuthConsumablesDB = { scale = 0.9, hidden = {}, mappings = {} }
+        AzimuthConsumablesCharDB = { position = { "CENTER", "CENTER", 22, -30 } }
+        spec = 1
+        C_SpecializationInfo = {
+            GetSpecialization = function() return spec end,
+            GetSpecializationInfo = function(index) return 100 + index, "Spec " .. index end,
+        }
+    `);
+    assert.deepEqual(legacy, [0.9, 22]);
+    assert.deepEqual(character, [1.4, 0.9, true]);
+    assert.deepEqual(shared, [0.9, true, true]);
+    assert.equal(spec2, 0.9);
+    assert.equal(restored, 1.2);
+    assert.equal(combat, 1.2);
+    assert.deepEqual(afterCombat, [1.4, true]);
+});
+
+test('reminder controls save item overrides and copying shared settings restores a personal profile', () => {
+    const [inherited, custom, invalid, copied] = integration(`
+        local panel = AzimuthConsumablesReminderOptions
+        panel:Show()
+        local edits = {}
+        for _, control in ipairs(panel.children) do
+            if control:GetObjectType() == "EditBox" then edits[#edits + 1] = control end
+        end
+        edits[1]:SetText("120")
+        stub.RunScript(edits[1], "OnEnterPressed")
+        buffs = { { spellId = 100, name = "Elixir Effect", expirationTime = 60 } }
+        stub.fire("UNIT_AURA", "player")
+        emit({ ns.GetSettings().refreshDefault, ns.Buttons[1].glow:GetAlpha() > 0 })
+        edits[3]:SetText("1")
+        edits[4]:SetText("30")
+        for _, control in ipairs(panel.children) do
+            if control:GetText() == "Save" then control:Click(); break end
+        end
+        emit({ ns.GetSettings().refreshThresholds[1], ns.Buttons[1].glow:GetAlpha() })
+        edits[1]:SetText("-5")
+        stub.RunScript(edits[1], "OnEnterPressed")
+        emit(ns.GetSettings().refreshDefault)
+        ns.SetProfileMode("character")
+        ns.GetSettings().refreshDefault = 5
+        ns.GetSettings().hidden[1] = true
+        ns.Refresh()
+        ns.CopySharedProfile()
+        emit({ ns.GetSettings().refreshDefault, ns.GetSettings().hidden[1] == nil,
+            ns.GetSettings().refreshThresholds[1], AzimuthConsumablesDB.refreshDefault })
+    `);
+    assert.deepEqual(inherited, [120, true]);
+    assert.deepEqual(custom, [30, 0]);
+    assert.equal(invalid, 120);
+    assert.deepEqual(copied, [120, true, 30, 120]);
+});
+
+test('class buff settings hide individual families and offer the preferred learned alternative', () => {
+    const [preferred, hidden, active] = integration(`
+        AzimuthConsumablesClassBuffOptions:Show()
+        local function rowNamed(name)
+            for _, frame in ipairs(stub.frames) do
+                if frame.choice and frame.choice.name == name then return frame end
+            end
+            error("Missing buff row")
+        end
+        local frost = rowNamed("Frost Armor")
+        frost.prefer:Click()
+        emit(ns.Buttons[2].item.spellName)
+        frost.enabled:SetChecked(false)
+        frost.enabled:Click()
+        emit({ ns.Buttons[2].item.spellName, ns.GetSettings().disabledBuffs[-168] })
+        frost.enabled:SetChecked(true)
+        frost.enabled:Click()
+        buffs = { { spellId = 6117, name = "Mage Armor", expirationTime = 1800 } }
+        stub.fire("UNIT_AURA", "player")
+        stub.runTimers()
+        emit(ns.Buttons[2].item.spellName)
+    `, `
+        UnitClass = function() return "Mage", "MAGE" end
+        local names = { [6117] = "Mage Armor", [168] = "Frost Armor" }
+        C_SpellBook = { IsSpellKnown = function(id) return names[id] ~= nil end }
+        C_Spell = {
+            GetSpellInfo = function(id)
+                if names[id] then return { name = names[id], iconID = id } end
+            end,
+            IsSpellUsable = function() return true end,
+        }
+    `);
+    assert.equal(preferred, 'Frost Armor');
+    assert.deepEqual(hidden, ['Mage Armor', true]);
+    assert.equal(active, 'Mage Armor');
+});
+
+test('refresh thresholds distinguish inherited, disabled, per-item and sleeping bag reminders', () => {
+    const [inherited, override, disabled, inheritedBag, customBag, permanent] = model(`
+        local item = { id = 1, spellID = 100 }
+        local auras = { { spellID = 100, expires = 90 } }
+        db.refreshDefault = 120
+        db.refreshThresholds = {}
+        emit(M.State(item, auras, db, 0, true).glow)
+        db.refreshThresholds[1] = 30
+        emit(M.State(item, auras, db, 0, true).glow)
+        db.refreshThresholds[1] = 0
+        emit(M.State(item, auras, db, 0, true).glow)
+        item = { id = 211527 }
+        auras = { { spellID = 429959, expires = 240 } }
+        emit(M.State(item, auras, db, 0, true).glow)
+        db.refreshThresholds[211527] = 60
+        emit(M.State(item, auras, db, 0, true).glow)
+        auras[1].expires = 0
+        emit(M.State(item, auras, db, 0, true).glow)
+    `);
+    assert.deepEqual([inherited, override, disabled, inheritedBag, customBag, permanent],
+        [true, false, false, true, false, false]);
 });
 
 test('consumables UI: settings apply scale, lock, title visibility, colors and blacklist entries', () => {

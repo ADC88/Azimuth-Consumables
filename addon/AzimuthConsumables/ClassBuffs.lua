@@ -96,7 +96,7 @@ function B.Items(settings, auras, effect, now, weapons)
     local bookRanks = spellbookRanks()
     local items, groups = {}, {}
     for _, family in ipairs(families) do
-            local base = family.ranks[#family.ranks]
+        local base = family.ranks[#family.ranks]
         local info = C_Spell.GetSpellInfo(base)
         if info then
             local cast, ids = nil, {}
@@ -114,18 +114,37 @@ function B.Items(settings, auras, effect, now, weapons)
                 spellID = cast or base, spellName = info.name, icon = info.iconID, buffIDs = ids,
                 weapon = family.weapon }
             local active = effect(item, auras, settings, now, weapons)
-            if cast or (not settings.hideUnavailableClassBuffs and (family.class == class or active)) then
+            local disabled = settings.disabledBuffs and settings.disabledBuffs[-base]
+            if not disabled and (cast or (not settings.hideUnavailableClassBuffs and (family.class == class or active))) then
                 local key = family.class .. ":" .. (family.group or base)
+                local preferred = settings.preferredBuffs and settings.preferredBuffs[key] == -base
                 local previous = groups[key]
                 if not previous then
                     items[#items + 1] = item
-                    groups[key] = { index = #items, active = active ~= nil, known = cast ~= nil }
-                elseif (active and not previous.active) or (cast and not previous.known and not previous.active) then
+                    groups[key] = { index = #items, active = active ~= nil, known = cast ~= nil, preferred = preferred }
+                elseif (active and not previous.active)
+                    or (not previous.active and cast and (not previous.known or (preferred and not previous.preferred))) then
                     items[previous.index] = item
-                    previous.active, previous.known = active ~= nil, cast ~= nil
+                    previous.active, previous.known, previous.preferred = active ~= nil, cast ~= nil, preferred
                 end
             end
         end
     end
     return items
+end
+
+function B.Options()
+    local _, class = UnitClass("player")
+    local result = {}
+    for _, family in ipairs(families) do
+        if family.class == class then
+            local base = family.ranks[#family.ranks]
+            local info = C_Spell and C_Spell.GetSpellInfo(base)
+            if info then
+                result[#result + 1] = { id = -base, name = info.name,
+                    group = family.group and (family.class .. ":" .. family.group) }
+            end
+        end
+    end
+    return result
 end

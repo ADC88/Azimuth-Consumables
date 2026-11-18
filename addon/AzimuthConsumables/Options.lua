@@ -80,6 +80,7 @@ function ns.RegisterOptions(db, apply, label)
     local empty = label(content, 11, "TOPLEFT", 0, 0)
     empty:SetText("Blacklist is empty.")
     local rows = {}
+    local advancedRefresh
 
     local function refresh()
         locked:SetChecked(db.locked)
@@ -147,8 +148,21 @@ function ns.RegisterOptions(db, apply, label)
     end)
     ns.RefreshOptions = function()
         if panel:IsVisible() then refresh() end
+        if advancedRefresh then advancedRefresh() end
+    end
+    ns.BindOptions = function(settings)
+        input:ClearFocus()
+        input:SetText("")
+        db = settings
+        ns.RefreshOptions()
     end
     local category = Settings.RegisterCanvasLayoutCategory(panel, "Azimuth Consumables")
     Settings.RegisterAddOnCategory(category)
+    local sections
+    advancedRefresh, sections = ns.RegisterAdvancedOptions(category, apply, label)
+    for index, name in ipairs({ "Profiles", "Class buffs", "Reminders" }) do
+        button(panel, name, 100, function() Settings.OpenToCategory(sections[name]:GetID()) end)
+            :SetPoint("TOPLEFT", 230 + (index - 1) * 106, -18)
+    end
     ns.OpenOptions = function() Settings.OpenToCategory(category:GetID()) end
 end

@@ -9,6 +9,19 @@ function M.Scale(value)
     return math.max(0.6, math.min(2, tonumber(value) or 1))
 end
 
+function M.RefreshSeconds(value)
+    local seconds = tonumber(value)
+    if not seconds or seconds ~= seconds then return 0 end
+    return math.max(0, math.min(3600, math.floor(seconds)))
+end
+
+function M.RefreshThreshold(item, settings)
+    local override = settings.refreshThresholds and settings.refreshThresholds[item.id]
+    if override ~= nil then return M.RefreshSeconds(override) end
+    if item.id == M.SleepingBag then return BAG_REFRESH end
+    return M.RefreshSeconds(settings.refreshDefault)
+end
+
 -- Only hide food whose use text is entirely ordinary health/mana recovery.
 -- Keep unfamiliar wording and extra effects visible.
 function M.IsRecoveryFood(lines)
@@ -126,8 +139,9 @@ function M.State(item, auras, settings, now, readable, weapons)
     local sleepingBag = item.id == M.SleepingBag
     if effect then
         local remaining = effect.expires and effect.expires > 0 and effect.expires - now or nil
-        local refresh = sleepingBag and ready and remaining and remaining < BAG_REFRESH
-        return { text = M.Time(remaining), glow = refresh, active = true, effect = effect }
+        local refresh = remaining and remaining < M.RefreshThreshold(item, settings)
+            and (not sleepingBag or ready)
+        return { text = M.Time(remaining), glow = not not refresh, active = true, effect = effect }
     end
     local mapping = settings.mappings[item.id]
     local isWeapon = not sleepingBag and (mapping and mapping.weapon or (not mapping and (item.weapon

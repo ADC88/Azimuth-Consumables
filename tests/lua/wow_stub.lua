@@ -592,6 +592,12 @@ Settings = {
 		return c
 	end,
 	RegisterAddOnCategory = function() end,
+	RegisterCanvasLayoutSubcategory = function(parent, frame, name)
+		local c = { frame = frame, name = name, parent = parent, ID = name }
+		function c.GetID() return name end
+		table.insert(Settings.categories, c)
+		return c
+	end,
 	OpenToCategory = function(id) stub.openedCategory = id end,
 }
 
@@ -735,6 +741,7 @@ function debugprofilestop() return stub.now * 1000 end
 function GetFramerate() return 60 end
 function GetBuildInfo() return "1.60.1", "70338", "Oct  1 2026", 16001 end
 function GetLocale() return "enUS" end
+function UnitClass() return "Warrior", "WARRIOR" end
 function GetRealmName() return "Test Realm" end
 function GetNormalizedRealmName() return "TestRealm" end
 function UnitName(unit) if unit == "player" then return "Testchar" end end
