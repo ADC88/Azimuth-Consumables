@@ -7,6 +7,7 @@ local keys = {
     "hideTitle", "backgroundColor", "glowColor", "excludeRecoveryFood",
     "hideUnavailableClassBuffs", "hideClassBuffs", "disabledBuffs",
     "preferredBuffs", "refreshDefault", "refreshThresholds",
+    "iconSize", "spacing", "iconsPerLine", "vertical", "timerTextSize", "countTextSize",
 }
 
 local function copy(value)

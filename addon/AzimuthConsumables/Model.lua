@@ -2,6 +2,54 @@
 local _, ns = ...
 local M = {}
 ns.Model = M
+M.Statuses = {
+    ACTIVE = { label = "Active", badge = "", color = { 0.4, 1, 0.65 } },
+    EXPIRING = { label = "Expiring soon", badge = "EXP", color = { 1, 0.55, 0.15 } },
+    MISSING = { label = "Effect missing", badge = "MISS", color = { 1, 0.85, 0.4 } },
+    COOLDOWN = { label = "On cooldown", badge = "CD", color = { 0.45, 0.7, 1 } },
+    RESOURCE = { label = "Not enough mana or power", badge = "PWR", color = { 0.6, 0.5, 1 } },
+    UNAVAILABLE = { label = "Unavailable to cast or use", badge = "N/A", color = { 0.7, 0.7, 0.7 } },
+    EMPTY = { label = "No copies in bags", badge = "0", color = { 0.7, 0.7, 0.7 } },
+    UNKNOWN = { label = "Effect data unavailable", badge = "?", color = { 0.7, 0.7, 0.7 } },
+}
+
+function M.Number(value, default, minimum, maximum)
+    local number = tonumber(value)
+    if not number or number ~= number then number = default end
+    return math.max(minimum, math.min(maximum, math.floor(number)))
+end
+
+function M.Layout(count, settings)
+    local size = M.Number(settings.iconSize, 40, 24, 80)
+    local gap = M.Number(settings.spacing, 7, 0, 20)
+    local perLine = M.Number(settings.iconsPerLine, 8, 1, 20)
+    local columns, rows = math.min(count, perLine), math.ceil(count / perLine)
+    if settings.vertical then columns, rows = rows, columns end
+    return { size = size, gap = gap, perLine = perLine, rows = rows, columns = columns,
+        width = columns * (size + gap) + gap, height = rows * (size + gap) }
+end
+
+function M.Status(item, state, now, usable, noResource, enabled)
+    if item.classBuff and not item.castSpell then return "UNAVAILABLE" end
+    if not item.classBuff and item.count == 0 then return "EMPTY" end
+    if state.status == "UNKNOWN" then return "UNKNOWN" end
+    if item.cooldownEnd and item.cooldownEnd > now then return "COOLDOWN" end
+    if noResource then return "RESOURCE" end
+    if usable == false or enabled == 0 then return "UNAVAILABLE" end
+    return state.status
+end
+
+function M.SelectionReason(item, settings)
+    if settings.hidden[item.id] then return "Blacklisted" end
+    if settings.excludeRecoveryFood and item.recoveryFood and not settings.mappings[item.id] then
+        return "Recovery-only food filtered"
+    end
+    if (item.count or 0) <= 0 then return "No copies in bags" end
+    if item.id == M.SleepingBag or settings.mappings[item.id] or (item.classID == 0 and item.spellID) then
+        return "Included"
+    end
+    return "No usable consumable spell or explicit mapping"
+end
 M.SleepingBag = 211527
 local WELL_RESTED, BAG_REFRESH = 429959, 300
 
@@ -58,8 +106,7 @@ end
 function M.Items(slots, settings)
     local byID, items = {}, {}
     for _, item in ipairs(slots) do
-        if item.id and (item.count or 0) > 0 and not M.IsExcluded(item, settings)
-            and (item.id == M.SleepingBag or settings.mappings[item.id] or (item.classID == 0 and item.spellID)) then
+        if item.id and M.SelectionReason(item, settings) == "Included" then
             if byID[item.id] then
                 byID[item.id].count = byID[item.id].count + item.count
             else
@@ -141,14 +188,15 @@ function M.State(item, auras, settings, now, readable, weapons)
         local remaining = effect.expires and effect.expires > 0 and effect.expires - now or nil
         local refresh = remaining and remaining < M.RefreshThreshold(item, settings)
             and (not sleepingBag or ready)
-        return { text = M.Time(remaining), glow = not not refresh, active = true, effect = effect }
+        return { text = M.Time(remaining), glow = not not refresh, active = true, effect = effect,
+            status = refresh and "EXPIRING" or "ACTIVE" }
     end
     local mapping = settings.mappings[item.id]
     local isWeapon = not sleepingBag and (mapping and mapping.weapon or (not mapping and (item.weapon
         or (settings.weaponEnchants and settings.weaponEnchants[item.id]))))
     if (isWeapon and (not weapons or not weapons.readable)) or (not isWeapon and not readable) then
-        return { text = "?", glow = false }
+        return { text = "?", glow = false, status = "UNKNOWN" }
     end
     return { text = ready and "READY" or ("CD " .. M.Time(item.cooldownEnd - now)),
-        glow = not sleepingBag or ready }
+        glow = not sleepingBag or ready, status = ready and "MISSING" or "COOLDOWN" }
 end

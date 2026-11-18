@@ -34,6 +34,26 @@ Open `/azc` and choose **Class buffs**, **Reminders** or **Profiles**.
 - **Reminders** sets the default refresh threshold and overrides for individual consumable item IDs or links. Values are seconds, from 0 to 3600. Zero means remind when missing; a blank override inherits the default. The sleeping bag keeps its 300-second default unless you override it. Buffs with an unreadable duration suppress early-refresh reminders.
 - **Profiles** chooses shared, character or spec settings. Existing settings become the shared profile. New character and spec profiles copy shared settings once, then save buff choices, reminders, colors, size and blacklists independently. Character and spec profiles also save their own position. Shared profiles retain each character's existing position.
 - **Copy shared settings into this profile** replaces the current character or spec settings with a fresh copy of shared settings. Profile and layout switches wait until combat ends.
+
+## Layout and status
+
+Open `/azc` and choose **Layout / status**. Set horizontal or vertical wrapping, icons per row or column, icon size, spacing, timer text size and stack count text size. The preview scales down to fit the Settings panel. Layout settings are saved in your active profile and apply to the bar after combat.
+
+The effect countdown keeps showing the remaining buff duration. A separate badge explains attention or availability:
+
+- **EXP** marks a buff within its refresh threshold.
+- **MISS** marks a missing tracked effect.
+- **CD** marks an item or spell on cooldown.
+- **PWR** means the client reports insufficient mana or power.
+- **N/A** marks an unavailable action.
+- **0** marks an empty stack while an effect remains active.
+- **?** marks unreadable effect data.
+
+Timer colors follow these statuses. Active effects use green. Hover an icon for its full status description. Missing and expiring reminders pulse when their actions are ready.
+
+## Diagnostics
+
+Use `/azc debug` to open a report you can copy with Ctrl+A and Ctrl+C. Use `/azc debug ITEM_ID` to focus on a consumable, or a class buff's base spell ID to focus on that family. The report includes the loaded addon version, class, spec, active profile, layout, tracked effects and matches, refresh thresholds, bag selection reasons and class buff controls.
 - An active effect without a readable expiration is labeled `ACTIVE`. `?` means the client restricts aura information; it does not trigger a false missing-buff glow.
 - Drag the header to move the bar. `/azc lock` locks it; `/azc unlock` unlocks it.
 - Right-click an icon to link it to one of your **currently active buffs or weapon enchants**. The picker stays open through bag and item-cache refreshes; it closes when you select an effect, press Escape, use its close button or enter combat. Choose **Automatic matching (reset)** to remove a manual override.

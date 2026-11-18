@@ -1,4 +1,5 @@
 local _, ns = ...
+local unpack = unpack or table.unpack
 local editors = {}
 
 local function button(parent, text, width, action)
@@ -59,6 +60,96 @@ function ns.RegisterAdvancedOptions(parentCategory, apply, label)
         frame:SetScript("OnShow", function() refreshers[name]() end)
         panels[name], categories[name] = frame, category
         return frame
+    end
+
+    local layoutPanel = panel("Layout and status", "AzimuthConsumablesLayoutOptions")
+    local layoutStatus = label(layoutPanel, 11, "TOPLEFT", 16, -50)
+    local fields = {
+        { key = "iconsPerLine", text = "Icons per row / column", min = 1, max = 20, default = 8 },
+        { key = "iconSize", text = "Icon size", min = 24, max = 80, default = 40 },
+        { key = "spacing", text = "Icon spacing", min = 0, max = 20, default = 7 },
+        { key = "timerTextSize", text = "Timer text size", min = 8, max = 20, default = 10 },
+        { key = "countTextSize", text = "Stack count text size", min = 8, max = 20, default = 11 },
+    }
+    for index, field in ipairs(fields) do
+        local y = -86 - (index - 1) * 40
+        label(layoutPanel, 12, "TOPLEFT", 16, y - 6):SetText(field.text)
+        field.input = input(layoutPanel, 70)
+        field.input:SetPoint("TOPLEFT", 210, y)
+        local function save(self)
+            if ns.ProfileChanging then return end
+            local value = tonumber(self:GetText())
+            if not value or value ~= value or value < field.min or value > field.max then
+                layoutStatus:SetText(("Enter %d to %d for %s."):format(field.min, field.max, field.text:lower()))
+                return
+            end
+            ns.GetSettings()[field.key] = ns.Model.Number(value, field.default, field.min, field.max)
+            layoutStatus:SetText("")
+            apply()
+            refreshers["Layout and status"]()
+        end
+        field.input:SetScript("OnEnterPressed", function(self) save(self); self:ClearFocus() end)
+        field.input:SetScript("OnEditFocusLost", save)
+    end
+    local vertical = CreateFrame("CheckButton", nil, layoutPanel, "UICheckButtonTemplate")
+    vertical:SetPoint("TOPLEFT", 310, -79)
+    label(vertical, 12, "LEFT", 32, 0):SetText("Vertical layout")
+    vertical:SetScript("OnClick", function(self)
+        ns.GetSettings().vertical = self:GetChecked()
+        apply()
+        refreshers["Layout and status"]()
+    end)
+    label(layoutPanel, 12, "TOPLEFT", 310, -125):SetText("Preview (scaled to fit)")
+    local preview = CreateFrame("Frame", nil, layoutPanel)
+    preview:SetPoint("TOPLEFT", 310, -154)
+    local previewIcons = {}
+    for index = 1, 6 do
+        local sample = CreateFrame("Frame", nil, preview)
+        local texture = sample:CreateTexture(nil, "ARTWORK")
+        texture:SetAllPoints()
+        texture:SetTexture(134400)
+        sample.count = label(sample, 11, "TOPRIGHT", -2, -2)
+        sample.count:SetText("5")
+        sample.time = label(sample, 10, "BOTTOM", 0, 2)
+        sample.time:SetText("1:30")
+        previewIcons[index] = sample
+    end
+    button(layoutPanel, "Reset layout", 140, function()
+        local settings = ns.GetSettings()
+        for _, field in ipairs(fields) do settings[field.key] = field.default end
+        settings.vertical = false
+        apply()
+        refreshers["Layout and status"]()
+    end):SetPoint("TOPLEFT", 16, -300)
+    button(layoutPanel, "Diagnostic report", 160, function() ns.ShowDebug() end):SetPoint("TOPLEFT", 16, -340)
+    local statusOrder = { "ACTIVE", "EXPIRING", "MISSING", "COOLDOWN", "RESOURCE", "UNAVAILABLE", "EMPTY", "UNKNOWN" }
+    for index, code in ipairs(statusOrder) do
+        local status = ns.Model.Statuses[code]
+        local column, row = (index - 1) % 2, math.floor((index - 1) / 2)
+        local text = label(layoutPanel, 11, "TOPLEFT", 16 + column * 280, -396 - row * 24)
+        text:SetText((status.badge ~= "" and (status.badge .. " — ") or "") .. status.label)
+        text:SetTextColor(unpack(status.color))
+    end
+    label(layoutPanel, 11, "TOPLEFT", 16, -510):SetText("Layout changes apply after combat. Preview icons demonstrate your saved layout.")
+    refreshers["Layout and status"] = function()
+        local settings = ns.GetSettings()
+        for _, field in ipairs(fields) do
+            if not field.input:HasFocus() then field.input:SetText(settings[field.key]) end
+        end
+        vertical:SetChecked(settings.vertical)
+        local layout = ns.Model.Layout(6, settings)
+        preview:SetSize(math.max(1, layout.width), math.max(1, layout.height))
+        preview:SetScale(math.min(1, 240 / math.max(1, layout.width), 220 / math.max(1, layout.height)))
+        for index, sample in ipairs(previewIcons) do
+            local column, row = (index - 1) % layout.perLine, math.floor((index - 1) / layout.perLine)
+            if settings.vertical then column, row = row, column end
+            sample:SetSize(layout.size, layout.size)
+            sample:ClearAllPoints()
+            sample:SetPoint("TOPLEFT", layout.gap + column * (layout.size + layout.gap), -row * (layout.size + layout.gap))
+            local path = sample.time:GetFont()
+            sample.time:SetFont(path, settings.timerTextSize, "OUTLINE")
+            sample.count:SetFont(path, settings.countTextSize, "OUTLINE")
+        end
     end
 
     local profiles = panel("Profiles", "AzimuthConsumablesProfiles")

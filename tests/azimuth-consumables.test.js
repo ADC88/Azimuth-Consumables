@@ -112,6 +112,7 @@ function integration(script, before = '') {
         assert(loadfile("addon/AzimuthConsumables/Weapons.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/Profiles.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/AdvancedOptions.lua"))("AzimuthConsumables", ns)
+        assert(loadfile("addon/AzimuthConsumables/Diagnostics.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/Options.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/ClassBuffs.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/Core.lua"))("AzimuthConsumables", ns)
@@ -411,6 +412,84 @@ test('refresh thresholds distinguish inherited, disabled, per-item and sleeping 
     `);
     assert.deepEqual([inherited, override, disabled, inheritedBag, customBag, permanent],
         [true, false, false, true, false, false]);
+});
+
+test('layout controls resize existing icons, wrap vertically and preserve protected actions during combat', () => {
+    const [horizontal, vertical, combat, applied] = integration(`
+        local panel = AzimuthConsumablesLayoutOptions
+        panel:Show()
+        local edits, toggle = {}, nil
+        for _, control in ipairs(panel.children) do
+            if control:GetObjectType() == "EditBox" then edits[#edits + 1] = control end
+            if control:GetObjectType() == "CheckButton" then toggle = control end
+        end
+        AzimuthConsumablesDB.hideTitle = true
+        slots = {}
+        for id = 1, 5 do slots[id] = { itemID = id, stackCount = 1 } end
+        edits[1]:SetText("3")
+        stub.RunScript(edits[1], "OnEnterPressed")
+        edits[2]:SetText("32")
+        stub.RunScript(edits[2], "OnEnterPressed")
+        edits[3]:SetText("4")
+        stub.RunScript(edits[3], "OnEnterPressed")
+        edits[4]:SetText("12")
+        stub.RunScript(edits[4], "OnEnterPressed")
+        emit({ AzimuthConsumablesBar:GetWidth(), AzimuthConsumablesBar:GetHeight(), ns.Buttons[1]:GetWidth() })
+        toggle:SetChecked(true)
+        toggle:Click()
+        local _, timerSize = ns.Buttons[1].time:GetFont()
+        emit({ AzimuthConsumablesBar:GetWidth(), AzimuthConsumablesBar:GetHeight(), timerSize })
+        stub.inCombat = true
+        edits[2]:SetText("48")
+        stub.RunScript(edits[2], "OnEnterPressed")
+        emit({ ns.Buttons[1]:GetWidth(), ns.Buttons[1]:GetAttribute("item1") })
+        stub.inCombat = false
+        stub.fire("PLAYER_REGEN_ENABLED")
+        stub.runTimers()
+        emit(ns.Buttons[1]:GetWidth())
+    `);
+    assert.deepEqual(horizontal, [112, 87, 32]);
+    assert.deepEqual(vertical, [76, 123, 12]);
+    assert.deepEqual(combat, [32, 'item:1']);
+    assert.equal(applied, 48);
+});
+
+test('status badges distinguish expiring buffs, cooldowns and power restrictions', () => {
+    const [missing, expiring, cooldown, resource] = integration(`
+        local b = ns.Buttons[1]
+        emit({ b.statusCode, b.status:GetText() })
+        AzimuthConsumablesDB.refreshDefault = 120
+        buffs = { { spellId = 100, name = "Elixir Effect", expirationTime = 60 } }
+        stub.fire("UNIT_AURA", "player")
+        emit({ b.statusCode, b.time:GetText() })
+        C_Container.GetItemCooldown = function() return 0, 600, 1 end
+        stub.fire("BAG_UPDATE_COOLDOWN")
+        emit({ b.statusCode, b.status:GetText(), b.time:GetText(), b.glow:GetAlpha() })
+        C_Container.GetItemCooldown = function() return 0, 0, 1 end
+        C_Item.IsUsableItem = function() return false, true end
+        stub.fire("BAG_UPDATE_COOLDOWN")
+        emit({ b.statusCode, b.status:GetText(), b.glow:GetAlpha() })
+    `);
+    assert.deepEqual(missing, ['MISSING', 'MISS']);
+    assert.deepEqual(expiring, ['EXPIRING', '1:00']);
+    assert.deepEqual(cooldown, ['COOLDOWN', 'CD', '1:00', 0]);
+    assert.deepEqual(resource, ['RESOURCE', 'PWR', 0]);
+});
+
+test('debug command opens a copyable report and explains blacklisted items', () => {
+    const [report, filtered] = integration(`
+        SlashCmdList.AZIMUTHCONSUMABLES("debug")
+        emit(ns.Diagnostics.edit:GetText())
+        AzimuthConsumablesDB.hidden[1] = true
+        SlashCmdList.AZIMUTHCONSUMABLES("debug 1")
+        emit(ns.Diagnostics.edit:GetText())
+    `);
+    assert.match(report, /Class: WARRIOR/);
+    assert.match(report, /Profile: Shared settings/);
+    assert.match(report, /status=MISSING/);
+    assert.match(report, /match=none/);
+    assert.match(filtered, /Example Elixir #1 \| Blacklisted/);
+    assert.doesNotMatch(filtered, /Example Elixir #1 \| status=/);
 });
 
 test('consumables UI: settings apply scale, lock, title visibility, colors and blacklist entries', () => {

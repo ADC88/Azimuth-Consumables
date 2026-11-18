@@ -164,5 +164,8 @@ function ns.RegisterOptions(db, apply, label)
         button(panel, name, 100, function() Settings.OpenToCategory(sections[name]:GetID()) end)
             :SetPoint("TOPLEFT", 230 + (index - 1) * 106, -18)
     end
+    button(panel, "Layout / status", 110, function()
+        Settings.OpenToCategory(sections["Layout and status"]:GetID())
+    end):SetPoint("TOPLEFT", 442, -50)
     ns.OpenOptions = function() Settings.OpenToCategory(category:GetID()) end
 end

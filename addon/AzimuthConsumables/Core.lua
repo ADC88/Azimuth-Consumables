@@ -5,11 +5,10 @@ local W = ns.Weapons
 local db, char, account, positionStore, bar, picker
 local buttons, items, itemByID, auras = {}, {}, {}, {}
 local auraReadable, initialized = true, false
-local requested, metadata = {}, {}
+local requested, metadata, bagSummary = {}, {}, {}
 local weapons = { effects = {}, readable = false }
 local pendingWeapon, pendingClassWeapon, layoutSignature, appliedGlow
 local queueLayout, activateProfile
-local SIZE, GAP, COLUMNS = 40, 7, 8
 local HEADER_HEIGHT, HANDLE_HEIGHT = 24, 12
 local EXPRESSWAY = [[Interface\AddOns\EllesmereUI\media\fonts\Expressway.TTF]]
 local FOOD_AND_DRINK = 5
@@ -71,6 +70,7 @@ end
 
 local function scanBags()
     local slots = {}
+    bagSummary = {}
     if not (C_Container and C_Item) then return end
     for bag = 0, (NUM_BAG_SLOTS or 4) do
         for slot = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
@@ -90,11 +90,20 @@ local function scanBags()
                         C_Item.RequestLoadItemDataByID(id)
                     end
                 end
+                local summary = bagSummary[id]
+                if not summary then
+                    summary = {}
+                    for key, value in pairs(cached) do summary[key] = value end
+                    summary.count = 0
+                    bagSummary[id] = summary
+                end
+                summary.count = summary.count + (read(info.stackCount) or 0)
                 if id == M.SleepingBag or cached.classID == 0 or db.mappings[id] then
                     if englishTooltips and db.excludeRecoveryFood and cached.classID == 0 and cached.subClassID == FOOD_AND_DRINK
                         and cached.spellID and cached.recoveryFood == nil then
                         cached.recoveryFood = recoveryFood(id)
                     end
+                    summary.recoveryFood = cached.recoveryFood
                     slots[#slots + 1] = {
                         id = id, count = read(info.stackCount) or 0, name = cached.name,
                         icon = cached.icon, classID = cached.classID, subClassID = cached.subClassID,
@@ -238,7 +247,7 @@ end
 
 local function newButton()
     local b = CreateFrame("Button", nil, bar, "SecureActionButtonTemplate")
-    b:SetSize(SIZE, SIZE)
+    b:SetSize(db.iconSize, db.iconSize)
     b:RegisterForClicks("AnyUp", "AnyDown")
     b:SetAttribute("useOnKeyDown", false)
     b:SetAttribute("type1", "item")
@@ -266,6 +275,9 @@ local function newButton()
     end
     b.count = label(b, 11, "TOPRIGHT", -2, -2)
     b.time = label(b, 10, "BOTTOM", 0, 2)
+    b.status = label(b, 8, "CENTER", 0, 0)
+    b.status:SetShadowColor(0, 0, 0, 1)
+    b.status:SetShadowOffset(1, -1)
     b:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         if self.item.classBuff then
@@ -281,6 +293,10 @@ local function newButton()
                 GameTooltip:AddLine("Left-click: use. Right-click: link active buff.", 0.4, 1, 0.8, true)
             end
             GameTooltip:AddLine("Shift-right-click: hide this item. /azc restore to restore.", 0.7, 0.7, 0.7, true)
+        end
+        if self.statusCode then
+            local status = M.Statuses[self.statusCode]
+            GameTooltip:AddLine(status.label, unpack(status.color))
         end
         GameTooltip:Show()
     end)
@@ -343,16 +359,20 @@ local function paint()
             b.count:SetText(item.classBuff and "" or (current and current.count or 0))
             if item.classBuff and not item.castSpell and not state.active then state.text = "N/A" end
             b.time:SetText(state.text)
-            b.time:SetTextColor(state.active and 0.4 or 1, state.active and 1 or 0.85, state.active and 0.65 or 0.4)
-            local usable
+            local usable, noResource
             if item.classBuff then
-                usable = item.castSpell and C_Spell.IsSpellUsable(item.castSpell)
+                if item.castSpell then usable, noResource = C_Spell.IsSpellUsable(item.castSpell) end
             elseif item.id == M.SleepingBag then
                 usable = not item.cooldownEnd or item.cooldownEnd <= now
             else
-                usable = C_Item.IsUsableItem(item.id)
+                usable, noResource = C_Item.IsUsableItem(item.id)
             end
-            local glow = state.glow
+            b.statusCode = M.Status(item, state, now, read(usable), read(noResource), enabled)
+            local status = M.Statuses[b.statusCode]
+            b.status:SetText(status.badge)
+            b.status:SetTextColor(unpack(status.color))
+            b.time:SetTextColor(unpack(status.color))
+            local glow = state.glow and (b.statusCode == "MISSING" or b.statusCode == "EXPIRING")
             if item.id == M.SleepingBag then
                 glow = glow and current and current.count > 0 and enabled ~= 0 and read(usable)
             end
@@ -397,7 +417,8 @@ rebuild = function()
     -- Keep picker contents stable while bag/item-data events arrive. Rebuilding
     -- the bar must not close or repurpose a row the player is about to click.
     local p = positionStore.position or { "CENTER", "CENTER", 0, -200 }
-    local signatureParts = { tostring(db.scale), tostring(db.disabled), tostring(db.hideTitle), table.concat(p, ":") }
+    local signatureParts = { tostring(db.scale), tostring(db.disabled), tostring(db.hideTitle), table.concat(p, ":"),
+        db.iconSize, db.spacing, db.iconsPerLine, tostring(db.vertical), db.timerTextSize, db.countTextSize }
     for _, item in ipairs(items) do
         signatureParts[#signatureParts + 1] = tostring(item.id)
         if item.classBuff then signatureParts[#signatureParts + 1] = "rank:" .. tostring(item.castSpell) end
@@ -411,14 +432,13 @@ rebuild = function()
     layoutSignature = signature
     local headerHeight = db.hideTitle and HANDLE_HEIGHT or HEADER_HEIGHT
     local itemTop = headerHeight + 3
-    local columns = math.min(#items, COLUMNS)
-    local rows = math.ceil(#items / COLUMNS)
-    local width = columns * (SIZE + GAP) + GAP
+    local layout = M.Layout(#items, db)
+    local width = layout.width
     if not db.hideTitle then width = math.max(width, math.ceil(bar.title:GetStringWidth()) + 16) end
-    local height = itemTop + rows * (SIZE + GAP)
-    if rows == 0 then
-        width = math.max(width, math.ceil(bar.empty:GetStringWidth()) + 2 * GAP)
-        height = headerHeight + 10 + 2 * GAP
+    local height = itemTop + layout.height
+    if #items == 0 then
+        width = math.max(width, math.ceil(bar.empty:GetStringWidth()) + 14)
+        height = headerHeight + 24
     end
     bar.header:SetHeight(headerHeight)
     bar:SetSize(width, height)
@@ -436,10 +456,20 @@ rebuild = function()
             b:SetAttribute("item1", not item.classBuff and ("item:" .. item.id) or nil)
         end
         b.item = item
+        b:SetSize(layout.size, layout.size)
+        setTextFont(b.time, db.timerTextSize, "OUTLINE", STANDARD_TEXT_FONT)
+        setTextFont(b.count, db.countTextSize, "OUTLINE", STANDARD_TEXT_FONT)
+        b.time:SetWidth(layout.size - 2)
+        b.time:SetWordWrap(false)
+        b.count:SetWidth(layout.size - 4)
+        b.count:SetJustifyH("RIGHT")
+        b.count:SetWordWrap(false)
         b.icon:SetTexture(item.icon or 134400)
         b:ClearAllPoints()
-        b:SetPoint("TOPLEFT", GAP + ((i - 1) % COLUMNS) * (SIZE + GAP),
-            -itemTop - math.floor((i - 1) / COLUMNS) * (SIZE + GAP))
+        local column, row = (i - 1) % layout.perLine, math.floor((i - 1) / layout.perLine)
+        if db.vertical then column, row = row, column end
+        b:SetPoint("TOPLEFT", layout.gap + column * (layout.size + layout.gap),
+            -itemTop - row * (layout.size + layout.gap))
         b:Show()
     end
     for i = #items + 1, #buttons do
@@ -491,6 +521,11 @@ local function normalizeSettings()
     db.preferredBuffs = type(db.preferredBuffs) == "table" and db.preferredBuffs or {}
     db.refreshThresholds = type(db.refreshThresholds) == "table" and db.refreshThresholds or {}
     db.refreshDefault = M.RefreshSeconds(db.refreshDefault)
+    db.iconSize = M.Number(db.iconSize, 40, 24, 80)
+    db.spacing = M.Number(db.spacing, 7, 0, 20)
+    db.iconsPerLine = M.Number(db.iconsPerLine, 8, 1, 20)
+    db.timerTextSize = M.Number(db.timerTextSize, 10, 8, 20)
+    db.countTextSize = M.Number(db.countTextSize, 11, 8, 20)
 end
 
 activateProfile = function()
@@ -557,7 +592,7 @@ local function initialize()
     end
     header:SetScript("OnDragStop", stopDrag)
     ns.StopDrag = stopDrag
-    bar.empty = label(bar, 10, "BOTTOMLEFT", GAP, GAP)
+    bar.empty = label(bar, 10, "BOTTOMLEFT", 7, 7)
     bar.empty:SetText("No items")
     local elapsed = 0
     bar:SetScript("OnUpdate", function(_, dt)
@@ -573,12 +608,41 @@ local function initialize()
     say("Loaded. Drag the header to move; /azc opens settings.")
 end
 
+ns.BuildDebugReport = function(query)
+    rebuild()
+    local _, class = UnitClass("player")
+    local _, spec = ns.Profiles.SpecKey()
+    local metadata = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
+    local version = metadata and metadata(ADDON, "Version") or "unknown"
+    local statuses = {}
+    for _, button in ipairs(buttons) do
+        if button:IsShown() and button.item then statuses[button.item.id] = button.statusCode end
+    end
+    return ns.Diagnostics.Build({
+        settings = db, version = version, class = class, profile = ns.ProfileName,
+        spec = spec, combat = not not combat(), now = GetTime(), auraReadable = auraReadable,
+        weapons = weapons, auras = auras, bags = bagSummary, items = items,
+        choices = ns.ClassBuffs.Options(), statuses = statuses, query = query,
+    })
+end
+
+ns.ShowDebug = function(query)
+    ns.Diagnostics.Show(ns.BuildDebugReport(query))
+end
+
 SLASH_AZIMUTHCONSUMABLES1 = "/azc"
 SlashCmdList.AZIMUTHCONSUMABLES = function(message)
     if not initialized then say("Ready after combat ends."); return end
     local command, args = message:match("^(%S*)%s*(.-)$")
     command = command:lower()
-    if command == "" or command == "config" or command == "options" then
+    if command == "debug" then
+        local query = args ~= "" and tonumber(args) or nil
+        if args ~= "" and (not query or query ~= math.floor(query) or query == 0) then
+            say("/azc debug [item ID or base spell ID]")
+            return
+        end
+        ns.ShowDebug(query and math.abs(query))
+    elseif command == "" or command == "config" or command == "options" then
         if ns.OpenOptions then ns.OpenOptions() end
     elseif command == "lock" then db.locked = true; say("Position locked.")
     elseif command == "unlock" then db.locked = false; say("Drag the header to move.")
@@ -612,6 +676,7 @@ SlashCmdList.AZIMUTHCONSUMABLES = function(message)
     else
         say("Left-click uses an item; right-click links its active buff; Shift-right-click hides it.")
         say("/azc opens settings for size, colors, locking, and filters.")
+        say("/azc debug [item ID or base spell ID] opens a copyable diagnostic report.")
         say("/azc lock | unlock | hide | show | restore | scale 1.2 | reset | buffs")
         say("/azc map ITEM_ID BUFF_ID [BUFF_ID ...] - link custom effects. Glow = missing; countdown = active effect; CD = reuse cooldown.")
     end

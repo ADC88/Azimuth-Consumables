@@ -136,13 +136,22 @@ end
 function B.Options()
     local _, class = UnitClass("player")
     local result = {}
+    local known = C_SpellBook and C_SpellBook.IsSpellKnown or IsPlayerSpell
+    local book = spellbookRanks()
     for _, family in ipairs(families) do
         if family.class == class then
             local base = family.ranks[#family.ranks]
             local info = C_Spell and C_Spell.GetSpellInfo(base)
             if info then
+                local available = false
+                for _, id in ipairs(family.ranks) do
+                    if known and known(id) then available = true; break end
+                end
+                for _, id in ipairs(book[info.name] or {}) do
+                    if known and known(id) then available = true; break end
+                end
                 result[#result + 1] = { id = -base, name = info.name,
-                    group = family.group and (family.class .. ":" .. family.group) }
+                    group = family.group and (family.class .. ":" .. family.group), available = available }
             end
         end
     end
