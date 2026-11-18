@@ -7,7 +7,7 @@ local buttons, items, itemByID, auras = {}, {}, {}, {}
 local auraReadable, initialized = true, false
 local requested, metadata = {}, {}
 local weapons = { effects = {}, readable = false }
-local pendingWeapon, layoutSignature, appliedGlow
+local pendingWeapon, pendingClassWeapon, layoutSignature, appliedGlow
 local queueLayout
 local SIZE, GAP, COLUMNS = 40, 7, 8
 local HEADER_HEIGHT, HANDLE_HEIGHT = 24, 12
@@ -108,23 +108,10 @@ local function scanBags()
     end
     items, itemByID = M.Items(slots, db), {}
     for _, item in ipairs(items) do itemByID[item.id] = item end
-    local isKnown = C_SpellBook and C_SpellBook.IsSpellKnown or IsPlayerSpell
-    if db.hideClassBuffs or not C_Spell then return end
-    local learnedRank
-    for _, id in ipairs(BATTLE_SHOUT_RANKS) do
-        if isKnown and isKnown(id) then learnedRank = id; break end
+    for _, buff in ipairs(ns.ClassBuffs.Items(db, auras, M.Effect, GetTime(), weapons)) do
+        items[#items + 1] = buff
+        itemByID[buff.id] = buff
     end
-    if not learnedRank and db.hideUnavailableClassBuffs then return end
-    local info = C_Spell.GetSpellInfo(learnedRank or 6673)
-    if not info then return end
-    local shout = { id = -6673, count = 1, classBuff = true, castSpell = learnedRank,
-        spellID = learnedRank or 6673, spellName = info.name, icon = info.iconID }
-    if not learnedRank then
-        local _, class = UnitClass("player")
-        if class ~= "WARRIOR" and not M.Effect(shout, auras, db, GetTime(), weapons) then return end
-    end
-    items[#items + 1] = shout
-    itemByID[shout.id] = shout
 end
 
 local function setTextFont(text, size, flags, fallback)
@@ -151,6 +138,13 @@ end
 
 local function pollWeapons()
     weapons = W.Read(GetTime())
+    if pendingClassWeapon then
+        if GetTime() > pendingClassWeapon.deadline then pendingClassWeapon = nil
+        elseif pendingClassWeapon.success and W.Learn(pendingClassWeapon.before, weapons,
+            1, 0, db, pendingClassWeapon.id) then
+            pendingClassWeapon = nil
+        end
+    end
     if pendingWeapon then
         if GetTime() > pendingWeapon.deadline then pendingWeapon = nil
         elseif C_Item and C_Item.GetItemCount then
@@ -237,6 +231,7 @@ end
 
 local function isWeaponConsumable(item)
     if not item then return false end
+    if item.classBuff then return false end
     local mapping = db.mappings[item.id]
     return item.weapon or db.weaponEnchants[item.id] or (mapping and mapping.weapon)
 end
@@ -275,7 +270,8 @@ local function newButton()
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         if self.item.classBuff then
             GameTooltip:SetSpellByID(self.item.spellID)
-            local hint = self.item.castSpell and "Left-click: cast Battle Shout." or "Battle Shout is unavailable to this loadout."
+            local hint = self.item.castSpell and ("Left-click: cast " .. self.item.spellName .. " on yourself.")
+                or "This buff is unavailable to this loadout."
             GameTooltip:AddLine(hint, 0.4, 1, 0.8, true)
         else
             GameTooltip:SetItemByID(self.item.id)
@@ -290,6 +286,12 @@ local function newButton()
     end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
     b:HookScript("PreClick", function(self, mouse, down)
+        if mouse == "LeftButton" and not down and self.item and self.item.classBuff
+            and self.item.weapon and self.item.castSpell then
+            pollWeapons()
+            pendingClassWeapon = { id = self.item.id, spellID = self.item.castSpell,
+                before = weapons, deadline = GetTime() + 15 }
+        end
         if mouse ~= "LeftButton" or down or not isWeaponConsumable(self.item) then return end
         pollWeapons()
         local count = C_Item.GetItemCount and read(C_Item.GetItemCount(self.item.id, false, false))
@@ -328,6 +330,12 @@ local function paint()
             local start, duration, enabled = 0, 0, 1
             if not item.classBuff and C_Container.GetItemCooldown then
                 start, duration, enabled = C_Container.GetItemCooldown(item.id)
+            elseif item.castSpell and C_Spell.GetSpellCooldown then
+                local ok, cooldown = pcall(C_Spell.GetSpellCooldown, item.castSpell)
+                if ok and not secret(cooldown) and cooldown then
+                    start, duration = cooldown.startTime, cooldown.duration
+                    enabled = read(cooldown.isEnabled) == false and 0 or 1
+                end
             end
             start, duration, enabled = read(start) or 0, read(duration) or 0, read(enabled)
             item.cooldownEnd = duration > 1.5 and start + duration or nil
@@ -423,6 +431,7 @@ rebuild = function()
             local action = item.castSpell and "spell" or (not item.classBuff and "item" or nil)
             b:SetAttribute("type1", action)
             b:SetAttribute("spell1", item.castSpell)
+            b:SetAttribute("unit1", item.classBuff and "player" or nil)
             b:SetAttribute("item1", not item.classBuff and ("item:" .. item.id) or nil)
         end
         b.item = item
@@ -437,6 +446,7 @@ rebuild = function()
         if b.item then
             b:SetAttribute("item1", nil)
             b:SetAttribute("spell1", nil)
+            b:SetAttribute("unit1", nil)
             b:SetAttribute("type1", nil)
             b.item = nil
             b:Hide()
@@ -564,7 +574,7 @@ local events = CreateFrame("Frame")
 for _, event in ipairs({ "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
     "BAG_UPDATE_DELAYED", "BAG_UPDATE_COOLDOWN", "UNIT_AURA", "UNIT_INVENTORY_CHANGED",
     "PLAYER_EQUIPMENT_CHANGED", "ITEM_DATA_LOAD_RESULT", "GET_ITEM_INFO_RECEIVED", "SPELLS_CHANGED",
-    "PLAYER_SPECIALIZATION_CHANGED" }) do
+    "PLAYER_SPECIALIZATION_CHANGED", "UNIT_SPELLCAST_SUCCEEDED" }) do
     events:RegisterEvent(event)
 end
 local scheduled = false
@@ -574,11 +584,18 @@ local function rebuildSoon()
     C_Timer.After(0, function() scheduled = false; rebuild() end)
 end
 queueLayout = rebuildSoon
-events:SetScript("OnEvent", function(_, event, unit, success)
+events:SetScript("OnEvent", function(_, event, unit, success, spellID)
     if event == "PLAYER_LOGIN" or event == "PLAYER_REGEN_ENABLED" then
         initialize()
         if initialized then scanAuras(); rebuildSoon() end
     elseif not initialized then return
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+        if unit == "player" and pendingClassWeapon and not secret(spellID)
+            and spellID == pendingClassWeapon.spellID then
+            pendingClassWeapon.success = true
+            pollWeapons()
+            rebuildSoon()
+        end
     elseif event == "PLAYER_REGEN_DISABLED" then
         closePicker()
         -- Starting combat automatically stops protected layout changes.
@@ -587,7 +604,7 @@ events:SetScript("OnEvent", function(_, event, unit, success)
         if unit == "player" then
             scanAuras()
             paint()
-            if not db.hideUnavailableClassBuffs then rebuildSoon() end
+            rebuildSoon()
         end
     elseif event == "BAG_UPDATE_COOLDOWN" then paint()
     elseif event == "ITEM_DATA_LOAD_RESULT" or event == "GET_ITEM_INFO_RECEIVED" then

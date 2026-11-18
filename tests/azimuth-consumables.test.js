@@ -111,6 +111,7 @@ function integration(script, before = '') {
         assert(loadfile("addon/AzimuthConsumables/Model.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/Weapons.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/Options.lua"))("AzimuthConsumables", ns)
+        assert(loadfile("addon/AzimuthConsumables/ClassBuffs.lua"))("AzimuthConsumables", ns)
         assert(loadfile("addon/AzimuthConsumables/Core.lua"))("AzimuthConsumables", ns)
         stub.fire("PLAYER_LOGIN")
         ${script}
@@ -180,7 +181,9 @@ test('consumables UI: Battle Shout casts the highest known rank and tracks the g
         UnitClass = function() return "Warrior", "WARRIOR" end
         C_SpellBook = { IsSpellKnown = function(id) return id == 6673 or id == 6192 end }
         C_Spell = {
-            GetSpellInfo = function() return { name = "Battle Shout", iconID = 123 } end,
+            GetSpellInfo = function(id)
+                if id == 6673 then return { name = "Battle Shout", iconID = 123 } end
+            end,
             IsSpellUsable = function() return true end,
         }
     `);
@@ -191,6 +194,73 @@ test('consumables UI: Battle Shout casts the highest known rank and tracks the g
     assert.deepEqual(restored, ['spell', 5242]);
     assert.deepEqual(hiddenAll, [true, true, true, true]);
     assert.deepEqual(shownAgain, [true, 5242]);
+});
+
+test('class maintenance buffs follow class, live spellbook ranks and active alternatives', () => {
+    const [classes, armor, newerRank] = model(`
+        assert(loadfile("addon/AzimuthConsumables/ClassBuffs.lua"))("AzimuthConsumables", ns)
+        local data = {
+            [6673] = "Battle Shout", [1243] = "Power Word: Fortitude",
+            [1459] = "Arcane Intellect", [1126] = "Mark of the Wild",
+            [13165] = "Aspect of the Hawk", [687] = "Demon Skin",
+            [324] = "Lightning Shield", [465] = "Devotion Aura",
+            [6117] = "Mage Armor", [168] = "Frost Armor",
+        }
+        C_Spell = { GetSpellInfo = function(id)
+            if data[id] then return { name = data[id], iconID = id } end
+        end }
+        C_SpellBook = { IsSpellKnown = function(id) return data[id] ~= nil end }
+        db.hideUnavailableClassBuffs = true
+        local class
+        UnitClass = function() return class, class end
+        local results = {}
+        for _, name in ipairs({ "WARRIOR", "PRIEST", "MAGE", "DRUID", "HUNTER", "WARLOCK", "SHAMAN", "PALADIN", "ROGUE" }) do
+            class = name
+            local buffs = ns.ClassBuffs.Items(db, {}, M.Effect, 0, {})
+            results[#results + 1] = { name, #buffs }
+        end
+        emit(results)
+        class = "MAGE"
+        local buffs = ns.ClassBuffs.Items(db, { { spellID = 168, name = "Frost Armor", expires = 1800 } }, M.Effect, 0, {})
+        emit(buffs[2].spellName)
+        C_SpellBook.GetNumSpellBookSkillLines = function() return 1 end
+        C_SpellBook.GetSpellBookSkillLineInfo = function() return { itemIndexOffset = 0, numSpellBookItems = 2 } end
+        C_SpellBook.GetSpellBookItemInfo = function(slot)
+            return { name = "Arcane Intellect", spellID = slot == 1 and 1459 or 999999, isPassive = false, isOffSpec = false }
+        end
+        C_SpellBook.IsSpellKnown = function(id) return id == 1459 or id == 999999 end
+        buffs = ns.ClassBuffs.Items(db, {}, M.Effect, 0, {})
+        emit(buffs[1].castSpell)
+    `);
+    assert.deepEqual(classes, [
+        ['WARRIOR', 1], ['PRIEST', 1], ['MAGE', 2], ['DRUID', 1], ['HUNTER', 1],
+        ['WARLOCK', 1], ['SHAMAN', 1], ['PALADIN', 1], ['ROGUE', 0],
+    ]);
+    assert.equal(armor, 'Frost Armor');
+    assert.equal(newerRank, 999999);
+});
+
+test('class weapon buffs learn an enchant only after their spell succeeds', () => {
+    const [initial, learned] = integration(`
+        local b = ns.Buttons[2]
+        emit({ b:GetAttribute("spell1"), b:GetAttribute("unit1") })
+        stub.RunScript(b, "PreClick", "LeftButton", false)
+        weaponData[0] = { { hasEnchant = true, enchantType = 2, enchantID = 283, timeLeft = 300000 } }
+        stub.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-guid", 8232)
+        stub.runTimers()
+        emit({ b.time:GetText(), AzimuthConsumablesDB.weaponEnchants[-8232][283] })
+    `, `
+        UnitClass = function() return "Shaman", "SHAMAN" end
+        C_SpellBook = { IsSpellKnown = function(id) return id == 8232 end }
+        C_Spell = {
+            GetSpellInfo = function(id)
+                if id == 8232 then return { name = "Windfury Weapon", iconID = 123 } end
+            end,
+            IsSpellUsable = function() return true end,
+        }
+    `);
+    assert.deepEqual(initial, [8232, 'player']);
+    assert.deepEqual(learned, ['5:00', true]);
 });
 
 test('consumables UI: settings apply scale, lock, title visibility, colors and blacklist entries', () => {

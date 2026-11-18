@@ -95,6 +95,9 @@ function M.Effect(item, auras, settings, now, weapons)
         local match = false
         if sleepingBag then
             match = aura.spellID == WELL_RESTED
+        elseif item.classBuff then
+            match = item.buffIDs and item.buffIDs[aura.spellID]
+                or item.spellID == aura.spellID or item.spellName == aura.name
         elseif mapping then
             for _, id in ipairs(mapping) do
                 if id == aura.spellID then match = true; break end
