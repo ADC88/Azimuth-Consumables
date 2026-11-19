@@ -48,8 +48,11 @@ The effect countdown keeps showing the remaining buff duration. A separate badge
 - **N/A** marks an unavailable action.
 - **0** marks an empty stack while an effect remains active.
 - **?** marks unreadable effect data.
+- **~** marks a countdown estimated from its last readable expiration during combat.
 
 Timer colors follow these statuses. Active effects use green. Hover an icon for its full status description. Missing and expiring reminders pulse when their actions are ready.
+
+Previously readable aura and weapon-coating timers continue counting down when combat restricts their data. Estimated timers stop at 0 seconds and synchronize when live data returns. Buff refreshes or removals during a restriction can change the true remaining duration. Effects whose expiration has never been readable continue to show unknown data.
 
 ## Diagnostics
 

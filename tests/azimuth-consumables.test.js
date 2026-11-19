@@ -121,6 +121,53 @@ function integration(script, before = '') {
     ` }).emitted;
 }
 
+test('combat retains the last readable aura timer and reconciles removals after combat', () => {
+    const [cached, elapsed, reconciled] = integration(`
+        buffs = { { spellId = 100, name = "Elixir Effect", expirationTime = 120 } }
+        stub.fire("UNIT_AURA", "player")
+        stub.inCombat = true
+        local restricted = {}
+        issecretvalue = function(value) return value == restricted end
+        C_UnitAuras.GetAuraDataByIndex = function(_, index)
+            if index == 1 then return { spellId = 100, name = "Elixir Effect", expirationTime = restricted } end
+        end
+        stub.fire("UNIT_AURA", "player")
+        stub.advance(30.1)
+        local b = ns.Buttons[1]
+        emit({ b.time:GetText(), b.status:GetText(), b.glow:GetAlpha() })
+        stub.advance(100)
+        emit({ b.time:GetText(), b.status:GetText(), b.glow:GetAlpha() })
+        stub.inCombat = false
+        C_UnitAuras.GetAuraDataByIndex = function() return nil end
+        stub.fire("PLAYER_REGEN_ENABLED")
+        stub.runTimers()
+        emit({ b.time:GetText(), b.status:GetText() })
+    `);
+    assert.deepEqual(cached, ['1:30', '~', 0]);
+    assert.deepEqual(elapsed, ['0s', '~', 0]);
+    assert.deepEqual(reconciled, ['READY', 'MISS']);
+});
+
+test('combat retains weapon enchant countdowns while live weapon data is restricted', () => {
+    const [cached, restored] = integration(`
+        local b = ns.Buttons[1]
+        stub.inCombat = true
+        C_Item.GetWeaponEnchantInfo = function() error("Restricted") end
+        stub.advance(30.1)
+        emit({ b.time:GetText(), b.status:GetText() })
+        stub.inCombat = false
+        C_Item.GetWeaponEnchantInfo = function() return {} end
+        stub.fire("PLAYER_REGEN_ENABLED")
+        stub.runTimers()
+        emit({ b.time:GetText(), b.status:GetText() })
+    `, `
+        AzimuthConsumablesDB = { weaponEnchants = { [1] = { [1643] = true } } }
+        weaponData[0] = { { hasEnchant = true, enchantType = 2, enchantID = 1643, timeLeft = 300000 } }
+    `);
+    assert.deepEqual(cached, ['4:30', '~']);
+    assert.deepEqual(restored, ['READY', 'MISS']);
+});
+
 test('consumables UI: sleeping bag stays clickable while the five-minute reminder follows availability', () => {
     const [ready, boundary, refresh, cooldown] = integration(`
         local b = ns.Buttons[1]

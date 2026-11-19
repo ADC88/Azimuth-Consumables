@@ -34,12 +34,13 @@ local function say(text)
     print("|cff61d9c4Azimuth Consumables:|r " .. text)
 end
 
--- Forever's C_UnitAuras can return restricted data during combat. Unknown
--- data is displayed as '?' rather than falsely claiming a buff is missing.
+-- Restricted combat scans retain the last readable timestamps.
 local function scanAuras()
+    local previous = auras
     auras, auraReadable = {}, true
-    if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then auraReadable = false; return end
-    for i = 1, 255 do
+    local api = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
+    if not api then auraReadable = false end
+    for i = 1, api and 255 or 0 do
         local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
         if not ok or secret(aura) then auraReadable = false; break end
         if not aura then break end
@@ -48,12 +49,17 @@ local function scanAuras()
             auraReadable = false
         else
             local expires = read(aura.expirationTime)
-            auras[#auras + 1] = {
-                spellID = id, name = name, expires = expires,
-                duration = read(aura.duration), icon = read(aura.icon),
-            }
+            if expires == nil then
+                auraReadable = false
+            else
+                auras[#auras + 1] = {
+                    spellID = id, name = name, expires = expires,
+                    duration = read(aura.duration), icon = read(aura.icon),
+                }
+            end
         end
     end
+    auras = M.PreserveEffects(previous, auras, auraReadable, combat())
 end
 
 local function recoveryFood(id)
@@ -146,7 +152,9 @@ local function closePicker()
 end
 
 local function pollWeapons()
-    weapons = W.Read(GetTime())
+    local snapshot = W.Read(GetTime())
+    snapshot.effects = M.PreserveEffects(weapons.effects, snapshot.effects, snapshot.readable, combat())
+    weapons = snapshot
     if pendingClassWeapon then
         if GetTime() > pendingClassWeapon.deadline then pendingClassWeapon = nil
         elseif pendingClassWeapon.success and W.Learn(pendingClassWeapon.before, weapons,
@@ -298,6 +306,9 @@ local function newButton()
             local status = M.Statuses[self.statusCode]
             GameTooltip:AddLine(status.label, unpack(status.color))
         end
+        if self.cachedTimer then
+            GameTooltip:AddLine("Estimated from the last readable timer. Refreshes and removals are confirmed when data becomes readable.", 1, 0.8, 0.4, true)
+        end
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -369,7 +380,8 @@ local function paint()
             end
             b.statusCode = M.Status(item, state, now, read(usable), read(noResource), enabled)
             local status = M.Statuses[b.statusCode]
-            b.status:SetText(status.badge)
+            b.cachedTimer = state.cached
+            b.status:SetText(state.cached and "~" or status.badge)
             b.status:SetTextColor(unpack(status.color))
             b.time:SetTextColor(unpack(status.color))
             local glow = state.glow and (b.statusCode == "MISSING" or b.statusCode == "EXPIRING")

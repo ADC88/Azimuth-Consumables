@@ -59,6 +59,12 @@ function W.Read(now)
             end
         end
     else result.readable = false end
+    for index = #result.effects, 1, -1 do
+        if result.effects[index].expires == nil then
+            result.readable = false
+            table.remove(result.effects, index)
+        end
+    end
     return result
 end
 

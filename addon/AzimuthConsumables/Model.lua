@@ -53,6 +53,26 @@ end
 M.SleepingBag = 211527
 local WELL_RESTED, BAG_REFRESH = 429959, 300
 
+-- Preserve timestamps already read by the client. Partial scans cannot prove
+-- an unobserved effect was removed. A complete scan replaces the cache.
+function M.PreserveEffects(previous, current, readable, inCombat)
+    if readable or not inCombat then return current end
+    local seen = {}
+    local function key(effect)
+        return effect.spellID or (tostring(effect.hand) .. ":" .. tostring(effect.enchantID))
+    end
+    for _, effect in ipairs(current) do seen[key(effect)] = true end
+    for _, effect in ipairs(previous) do
+        if not seen[key(effect)] then
+            local cached = {}
+            for name, value in pairs(effect) do cached[name] = value end
+            cached.cached = true
+            current[#current + 1] = cached
+        end
+    end
+    return current
+end
+
 function M.Scale(value)
     return math.max(0.6, math.min(2, tonumber(value) or 1))
 end
@@ -135,7 +155,7 @@ function M.Effect(item, auras, settings, now, weapons)
     local best
     local function consider(effect)
         local expires = effect.expires
-        if not expires or expires == 0 or expires > now then
+        if effect.cached or not expires or expires == 0 or expires > now then
             local rank = expires and expires > 0 and expires or math.huge
             local prior = best and best.expires
             if not best or rank > (prior and prior > 0 and prior or math.huge) then best = effect end
@@ -188,7 +208,8 @@ function M.State(item, auras, settings, now, readable, weapons)
         local remaining = effect.expires and effect.expires > 0 and effect.expires - now or nil
         local refresh = remaining and remaining < M.RefreshThreshold(item, settings)
             and (not sleepingBag or ready)
-        return { text = M.Time(remaining), glow = not not refresh, active = true, effect = effect,
+        return { text = M.Time(remaining), glow = not effect.cached and not not refresh,
+            active = true, effect = effect, cached = effect.cached,
             status = refresh and "EXPIRING" or "ACTIVE" }
     end
     local mapping = settings.mappings[item.id]

@@ -26,9 +26,9 @@ function D.Build(context)
             local effect = state.effect
             local match = effect and (effect.spellID or effect.enchantID or effect.name) or "none"
             local status = context.statuses[item.id] or state.status
-            lines[#lines + 1] = ("%s #%d | status=%s | timer=%s | match=%s | cast=%s | count=%d | refresh=%ds"):format(
+            lines[#lines + 1] = ("%s #%d | status=%s | timer=%s | estimated=%s | match=%s | cast=%s | count=%d | refresh=%ds"):format(
                 item.name or item.spellName or "Item", item.id, status, state.text,
-                tostring(match), tostring(item.castSpell or item.spellID), item.count or 0,
+                tostring(not not state.cached), tostring(match), tostring(item.castSpell or item.spellID), item.count or 0,
                 ns.Model.RefreshThreshold(item, db))
         end
     end
