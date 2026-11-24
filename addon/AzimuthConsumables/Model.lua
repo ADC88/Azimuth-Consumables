@@ -161,12 +161,15 @@ function M.Effect(item, auras, settings, now, weapons)
             if not best or rank > (prior and prior > 0 and prior or math.huge) then best = effect end
         end
     end
-    if weapons and ((mapping and mapping.weapon) or (not mapping and learned)) then
+    if weapons and ((mapping and mapping.weapon) or (not mapping and (learned or (item.classBuff and item.weapon)))) then
         for _, effect in ipairs(weapons.effects) do
             if mapping and mapping.weapon then
                 if (mapping.hand == "either" or mapping.hand == effect.hand)
                     and mapping.enchantID == effect.enchantID then consider(effect) end
-            elseif learned[effect.enchantID] then consider(effect) end
+            elseif (learned and learned[effect.enchantID])
+                or (item.classBuff and item.weapon and type(item.icon) == "number" and effect.icon == item.icon) then
+                consider(effect)
+            end
         end
         return best
     end

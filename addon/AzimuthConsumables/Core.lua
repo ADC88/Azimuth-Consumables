@@ -199,7 +199,7 @@ local function openPicker(item)
         label(picker, 10, "TOPLEFT", 12, -40):SetText("Choose the buff this item provides. Scroll for more.")
         table.insert(UISpecialFrames, "AzimuthConsumablesBuffPicker")
     end
-    picker.title:SetText(item.name .. " - link effect")
+    picker.title:SetText((item.name or item.spellName) .. " - link effect")
     picker.itemID = item.id
     local choices = { { name = "Automatic matching (reset)", reset = true } }
     for _, effect in ipairs(weapons.effects) do
@@ -210,7 +210,7 @@ local function openPicker(item)
     end
     local seen = {}
     for _, aura in ipairs(auras) do
-        if not seen[aura.spellID] then
+        if not (item.classBuff and item.weapon) and not seen[aura.spellID] then
             seen[aura.spellID] = true
             choices[#choices + 1] = aura
         end
@@ -292,6 +292,9 @@ local function newButton()
             GameTooltip:SetSpellByID(self.item.spellID)
             local hint = self.item.castSpell and ("Left-click: cast " .. self.item.spellName .. " on yourself.")
                 or "This buff is unavailable to this loadout."
+            if self.item.weapon then
+                hint = "Left-click to imbue your weapon. Right-click to link an existing weapon enchant."
+            end
             GameTooltip:AddLine(hint, 0.4, 1, 0.8, true)
         else
             GameTooltip:SetItemByID(self.item.id)
@@ -336,9 +339,10 @@ local function newButton()
             end
             return
         end
-        if mouse ~= "RightButton" or self.item.classBuff then return end
+        if mouse ~= "RightButton" or (self.item.classBuff and not self.item.weapon) then return end
         if IsShiftKeyDown() then
-            db.hidden[self.item.id] = true
+            if self.item.classBuff then db.disabledBuffs[self.item.id] = true
+            else db.hidden[self.item.id] = true end
             rebuild()
             if ns.RefreshOptions then ns.RefreshOptions() end
         elseif self.item.id ~= M.SleepingBag then
@@ -464,7 +468,7 @@ rebuild = function()
             local action = item.castSpell and "spell" or (not item.classBuff and "item" or nil)
             b:SetAttribute("type1", action)
             b:SetAttribute("spell1", item.castSpell)
-            b:SetAttribute("unit1", item.classBuff and "player" or nil)
+            b:SetAttribute("unit1", item.classBuff and not item.weapon and "player" or nil)
             b:SetAttribute("item1", not item.classBuff and ("item:" .. item.id) or nil)
         end
         b.item = item

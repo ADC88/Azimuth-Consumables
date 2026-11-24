@@ -290,10 +290,71 @@ test('class maintenance buffs follow class, live spellbook ranks and active alte
     assert.equal(newerRank, 999999);
 });
 
+test('Shaman imbues already on either weapon are detected by their client icon', () => {
+    const [flame, frost, rock, wind] = integration(`
+        local function selected()
+            local b = ns.Buttons[2]
+            emit({ b.item.castSpell, b.time:GetText(), b:GetAttribute("unit1") == nil })
+        end
+        selected()
+        weaponData[0] = {}
+        weaponData[1] = { { hasEnchant = true, enchantType = 3, enchantID = 9002, enchantIconID = 8033, timeLeft = 240000 } }
+        ns.Refresh()
+        selected()
+        weaponData[1][1].enchantIconID = 8017
+        ns.Refresh()
+        selected()
+        weaponData[1][1].enchantIconID = 8232
+        ns.Refresh()
+        selected()
+    `, `
+        UnitClass = function() return "Shaman", "SHAMAN" end
+        local names = { [8232] = "Windfury Weapon", [8033] = "Frostbrand Weapon",
+            [8024] = "Flametongue Weapon", [8017] = "Rockbiter Weapon" }
+        C_SpellBook = { IsSpellKnown = function(id) return names[id] ~= nil end }
+        C_Spell = {
+            GetSpellInfo = function(id)
+                if names[id] then return { name = names[id], iconID = id } end
+            end,
+            IsSpellUsable = function() return true end,
+        }
+        weaponData[0] = { { hasEnchant = true, enchantType = 3, enchantID = 9001,
+            enchantIconID = 8024, timeLeft = 300000 } }
+    `);
+    assert.deepEqual(flame, [8024, '5:00', true]);
+    assert.deepEqual(frost, [8033, '4:00', true]);
+    assert.deepEqual(rock, [8017, '4:00', true]);
+    assert.deepEqual(wind, [8232, '4:00', true]);
+});
+
+test('Shaman imbues can link an existing enchant when its icon is unavailable', () => {
+    const [missing, linked] = integration(`
+        local b = ns.Buttons[2]
+        emit(b.time:GetText())
+        stub.RunScript(b, "PostClick", "RightButton", false)
+        local picker = AzimuthConsumablesBuffPicker
+        picker.rows[2]:Click()
+        emit({ b.time:GetText(), AzimuthConsumablesDB.mappings[-8232].hand,
+            AzimuthConsumablesDB.mappings[-8232].enchantID })
+    `, `
+        UnitClass = function() return "Shaman", "SHAMAN" end
+        C_SpellBook = { IsSpellKnown = function(id) return id == 8232 end }
+        C_Spell = {
+            GetSpellInfo = function(id)
+                if id == 8232 then return { name = "Windfury Weapon", iconID = 123 } end
+            end,
+            IsSpellUsable = function() return true end,
+        }
+        weaponData[1] = { { hasEnchant = true, enchantType = 2, enchantID = 283, timeLeft = 240000 } }
+    `);
+    assert.equal(missing, 'READY');
+    assert.deepEqual(linked, ['4:00', 'off', 283]);
+});
+
 test('class weapon buffs learn an enchant only after their spell succeeds', () => {
     const [initial, learned] = integration(`
         local b = ns.Buttons[2]
-        emit({ b:GetAttribute("spell1"), b:GetAttribute("unit1") })
+        emit({ b:GetAttribute("spell1"), b:GetAttribute("unit1") == nil })
         stub.RunScript(b, "PreClick", "LeftButton", false)
         weaponData[0] = { { hasEnchant = true, enchantType = 2, enchantID = 283, timeLeft = 300000 } }
         stub.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-guid", 8232)
@@ -309,7 +370,7 @@ test('class weapon buffs learn an enchant only after their spell succeeds', () =
             IsSpellUsable = function() return true end,
         }
     `);
-    assert.deepEqual(initial, [8232, 'player']);
+    assert.deepEqual(initial, [8232, true]);
     assert.deepEqual(learned, ['5:00', true]);
 });
 
