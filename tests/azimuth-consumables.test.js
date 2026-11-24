@@ -531,7 +531,10 @@ test('consumable refresh filter returns hidden items as they expire and defers h
         local edits = {}
         for _, control in ipairs(panel.children) do
             if control:GetObjectType() == "EditBox" then edits[#edits + 1] = control end
-            if control:GetObjectType() == "CheckButton" then
+        end
+        for _, control in ipairs(AzimuthConsumablesOptions.children) do
+            if control:GetObjectType() == "CheckButton"
+                and control.regions[1]:GetText() == "Only show missing or expiring consumables" then
                 control:SetChecked(true)
                 control:Click()
             end

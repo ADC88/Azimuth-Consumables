@@ -261,13 +261,7 @@ function ns.RegisterAdvancedOptions(parentCategory, apply, label)
         if saveSeconds(self, ns.GetSettings().refreshThresholds, ns.Model.SleepingBag, reminderStatus) then apply() end
     end)
     label(reminders, 11, "TOPLEFT", 16, -218):SetText("The sleeping bag defaults to 300 seconds. Class buffs have individual controls in Class buffs.")
-    local needsRefresh = CreateFrame("CheckButton", nil, reminders, "UICheckButtonTemplate")
-    needsRefresh:SetPoint("TOPLEFT", 14, -244)
-    label(needsRefresh, 12, "LEFT", 32, 0):SetText("Only show missing or expiring consumables")
-    needsRefresh:SetScript("OnClick", function(self)
-        ns.GetSettings().onlyNeedsRefresh = self:GetChecked()
-        apply()
-    end)
+    label(reminders, 11, "TOPLEFT", 16, -250):SetText("Enable Only show missing or expiring consumables on the main settings panel.")
     label(reminders, 12, "TOPLEFT", 16, -287):SetText("Reapplication threshold (seconds)")
     local needsSeconds = input(reminders, 80)
     needsSeconds:SetPoint("TOPLEFT", 280, -281)
@@ -303,7 +297,6 @@ function ns.RegisterAdvancedOptions(parentCategory, apply, label)
     seconds:SetScript("OnEnterPressed", saveItem)
     refreshers.Reminders = function()
         local db = ns.GetSettings()
-        needsRefresh:SetChecked(db.onlyNeedsRefresh)
         if not needsSeconds:HasFocus() then needsSeconds:SetText(db.needsRefreshSeconds) end
         if not defaultSeconds:HasFocus() then defaultSeconds:SetText(db.refreshDefault) end
         if not bagSeconds:HasFocus() then bagSeconds:SetText(db.refreshThresholds[ns.Model.SleepingBag] or "") end
