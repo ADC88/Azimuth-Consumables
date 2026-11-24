@@ -439,8 +439,8 @@ test('reminder controls save item overrides and copying shared settings restores
         buffs = { { spellId = 100, name = "Elixir Effect", expirationTime = 60 } }
         stub.fire("UNIT_AURA", "player")
         emit({ ns.GetSettings().refreshDefault, ns.Buttons[1].glow:GetAlpha() > 0 })
-        edits[3]:SetText("1")
-        edits[4]:SetText("30")
+        edits[4]:SetText("1")
+        edits[5]:SetText("30")
         for _, control in ipairs(panel.children) do
             if control:GetText() == "Save" then control:Click(); break end
         end
@@ -520,6 +520,51 @@ test('refresh thresholds distinguish inherited, disabled, per-item and sleeping 
     `);
     assert.deepEqual([inherited, override, disabled, inheritedBag, customBag, permanent],
         [true, false, false, true, false, false]);
+});
+
+test('consumable refresh filter returns hidden items as they expire and defers hiding in combat', () => {
+    const [hidden, expiring, missing, duringCombat, afterCombat, override] = integration(`
+        buffs = { { spellId = 100, name = "Elixir Effect", expirationTime = 100 } }
+        stub.fire("UNIT_AURA", "player")
+        local panel = AzimuthConsumablesReminderOptions
+        panel:Show()
+        local edits = {}
+        for _, control in ipairs(panel.children) do
+            if control:GetObjectType() == "EditBox" then edits[#edits + 1] = control end
+            if control:GetObjectType() == "CheckButton" then
+                control:SetChecked(true)
+                control:Click()
+            end
+        end
+        edits[3]:SetText("60")
+        stub.RunScript(edits[3], "OnEnterPressed")
+        local b = ns.Buttons[1]
+        emit({ not b:IsShown(), AzimuthConsumablesDB.onlyNeedsRefresh, AzimuthConsumablesDB.needsRefreshSeconds })
+        stub.advance(40.5)
+        emit({ b:IsShown(), b.time:GetText() })
+        buffs = {}
+        stub.fire("UNIT_AURA", "player")
+        stub.runTimers()
+        emit({ b:IsShown(), b.time:GetText() })
+        stub.inCombat = true
+        buffs = { { spellId = 100, name = "Elixir Effect", expirationTime = 500 } }
+        stub.fire("UNIT_AURA", "player")
+        stub.runTimers()
+        emit(b:IsShown())
+        stub.inCombat = false
+        stub.fire("PLAYER_REGEN_ENABLED")
+        stub.runTimers()
+        emit(b:IsShown())
+        AzimuthConsumablesDB.refreshThresholds[1] = 600
+        ns.Refresh()
+        emit(b:IsShown())
+    `);
+    assert.deepEqual(hidden, [true, true, 60]);
+    assert.deepEqual(expiring, [true, '1:00']);
+    assert.deepEqual(missing, [true, 'READY']);
+    assert.equal(duringCombat, true);
+    assert.equal(afterCombat, false);
+    assert.equal(override, true);
 });
 
 test('layout controls resize existing icons, wrap vertically and preserve protected actions during combat', () => {

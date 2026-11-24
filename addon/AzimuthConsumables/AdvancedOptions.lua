@@ -261,12 +261,32 @@ function ns.RegisterAdvancedOptions(parentCategory, apply, label)
         if saveSeconds(self, ns.GetSettings().refreshThresholds, ns.Model.SleepingBag, reminderStatus) then apply() end
     end)
     label(reminders, 11, "TOPLEFT", 16, -218):SetText("The sleeping bag defaults to 300 seconds. Class buffs have individual controls in Class buffs.")
-    label(reminders, 12, "TOPLEFT", 16, -257):SetText("Consumable item ID or link")
+    local needsRefresh = CreateFrame("CheckButton", nil, reminders, "UICheckButtonTemplate")
+    needsRefresh:SetPoint("TOPLEFT", 14, -244)
+    label(needsRefresh, 12, "LEFT", 32, 0):SetText("Only show missing or expiring consumables")
+    needsRefresh:SetScript("OnClick", function(self)
+        ns.GetSettings().onlyNeedsRefresh = self:GetChecked()
+        apply()
+    end)
+    label(reminders, 12, "TOPLEFT", 16, -287):SetText("Reapplication threshold (seconds)")
+    local needsSeconds = input(reminders, 80)
+    needsSeconds:SetPoint("TOPLEFT", 280, -281)
+    local function saveNeedsSeconds(self)
+        if ns.ProfileChanging then return end
+        if saveSeconds(self, ns.GetSettings(), "needsRefreshSeconds", reminderStatus) then
+            ns.GetSettings().needsRefreshSeconds = ns.Model.Number(ns.GetSettings().needsRefreshSeconds, 300, 0, 3600)
+            apply()
+        end
+    end
+    needsSeconds:SetScript("OnEnterPressed", function(self) saveNeedsSeconds(self); self:ClearFocus() end)
+    needsSeconds:SetScript("OnEditFocusLost", saveNeedsSeconds)
+    label(reminders, 11, "TOPLEFT", 16, -322):SetText("Item overrides take priority. 0 shows only missing effects. Class buffs keep their own controls.")
+    label(reminders, 12, "TOPLEFT", 16, -360):SetText("Consumable item ID or link")
     local itemID, seconds = input(reminders, 190), input(reminders, 70)
-    itemID:SetPoint("TOPLEFT", 22, -282)
+    itemID:SetPoint("TOPLEFT", 22, -385)
     seconds:SetPoint("LEFT", itemID, "RIGHT", 18, 0)
-    label(reminders, 11, "TOPLEFT", 310, -288):SetText("seconds")
-    local reminderContent = scrollContent(reminders, -330)
+    label(reminders, 11, "TOPLEFT", 310, -391):SetText("seconds")
+    local reminderContent = scrollContent(reminders, -433)
     local reminderRows = {}
     local function saveItem()
         local text = itemID:GetText() or ""
@@ -283,6 +303,8 @@ function ns.RegisterAdvancedOptions(parentCategory, apply, label)
     seconds:SetScript("OnEnterPressed", saveItem)
     refreshers.Reminders = function()
         local db = ns.GetSettings()
+        needsRefresh:SetChecked(db.onlyNeedsRefresh)
+        if not needsSeconds:HasFocus() then needsSeconds:SetText(db.needsRefreshSeconds) end
         if not defaultSeconds:HasFocus() then defaultSeconds:SetText(db.refreshDefault) end
         if not bagSeconds:HasFocus() then bagSeconds:SetText(db.refreshThresholds[ns.Model.SleepingBag] or "") end
         local ids = {}

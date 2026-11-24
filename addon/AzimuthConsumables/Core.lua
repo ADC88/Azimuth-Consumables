@@ -8,6 +8,7 @@ local auraReadable, initialized = true, false
 local requested, metadata, bagSummary = {}, {}, {}
 local weapons = { effects = {}, readable = false }
 local pendingWeapon, pendingClassWeapon, layoutSignature, appliedGlow
+local visibleIDs = {}
 local queueLayout, activateProfile
 local HEADER_HEIGHT, HANDLE_HEIGHT = 24, 12
 local EXPRESSWAY = [[Interface\AddOns\EllesmereUI\media\fonts\Expressway.TTF]]
@@ -421,6 +422,14 @@ rebuild = function()
         end
     end
     if combat() then paint(); return end
+    local visibleItems = {}
+    visibleIDs = {}
+    for _, item in ipairs(items) do
+        if M.ShowConsumable(item, auras, db, GetTime(), weapons) then
+            visibleItems[#visibleItems + 1] = item
+            visibleIDs[item.id] = true
+        end
+    end
     bar.title:SetShown(not db.hideTitle)
     local background = db.backgroundColor
     bar:SetBackdropColor(background[1], background[2], background[3], 0.88)
@@ -435,7 +444,7 @@ rebuild = function()
     local p = positionStore.position or { "CENTER", "CENTER", 0, -200 }
     local signatureParts = { tostring(db.scale), tostring(db.disabled), tostring(db.hideTitle), table.concat(p, ":"),
         db.iconSize, db.spacing, db.iconsPerLine, tostring(db.vertical), db.timerTextSize, db.countTextSize }
-    for _, item in ipairs(items) do
+    for _, item in ipairs(visibleItems) do
         signatureParts[#signatureParts + 1] = tostring(item.id)
         if item.classBuff then signatureParts[#signatureParts + 1] = "rank:" .. tostring(item.castSpell) end
     end
@@ -448,11 +457,11 @@ rebuild = function()
     layoutSignature = signature
     local headerHeight = db.hideTitle and HANDLE_HEIGHT or HEADER_HEIGHT
     local itemTop = headerHeight + 3
-    local layout = M.Layout(#items, db)
+    local layout = M.Layout(#visibleItems, db)
     local width = layout.width
     if not db.hideTitle then width = math.max(width, math.ceil(bar.title:GetStringWidth()) + 16) end
     local height = itemTop + layout.height
-    if #items == 0 then
+    if #visibleItems == 0 then
         width = math.max(width, math.ceil(bar.empty:GetStringWidth()) + 14)
         height = headerHeight + 24
     end
@@ -461,7 +470,7 @@ rebuild = function()
     bar:ClearAllPoints()
     bar:SetPoint(p[1], UIParent, p[2], p[3], p[4])
     bar:SetScale(db.scale)
-    for i, item in ipairs(items) do
+    for i, item in ipairs(visibleItems) do
         local b = buttons[i]
         if not b then b = newButton(); buttons[i] = b end
         if not b.item or b.item.id ~= item.id or b.item.castSpell ~= item.castSpell then
@@ -488,7 +497,7 @@ rebuild = function()
             -itemTop - row * (layout.size + layout.gap))
         b:Show()
     end
-    for i = #items + 1, #buttons do
+    for i = #visibleItems + 1, #buttons do
         local b = buttons[i]
         if b.item then
             b:SetAttribute("item1", nil)
@@ -499,7 +508,7 @@ rebuild = function()
             b:Hide()
         end
     end
-    bar.empty:SetShown(#items == 0)
+    bar.empty:SetShown(#visibleItems == 0)
     bar:SetShown(not db.disabled)
     paint()
 end
@@ -542,6 +551,7 @@ local function normalizeSettings()
     db.iconsPerLine = M.Number(db.iconsPerLine, 8, 1, 20)
     db.timerTextSize = M.Number(db.timerTextSize, 10, 8, 20)
     db.countTextSize = M.Number(db.countTextSize, 11, 8, 20)
+    db.needsRefreshSeconds = M.Number(db.needsRefreshSeconds, 300, 0, 3600)
 end
 
 activateProfile = function()
@@ -613,7 +623,17 @@ local function initialize()
     local elapsed = 0
     bar:SetScript("OnUpdate", function(_, dt)
         elapsed = elapsed + dt
-        if elapsed >= 0.2 then elapsed = 0; pollWeapons(); paint() end
+        if elapsed >= 0.2 then
+            elapsed = 0
+            pollWeapons()
+            paint()
+            if db.onlyNeedsRefresh and not combat() then
+                for _, item in ipairs(items) do
+                    local show = M.ShowConsumable(item, auras, db, GetTime(), weapons)
+                    if show ~= (not not visibleIDs[item.id]) then queueLayout(); break end
+                end
+            end
+        end
     end)
     initialized = true
     ns.GetSettings = function() return db end

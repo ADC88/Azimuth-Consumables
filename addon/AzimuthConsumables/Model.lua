@@ -86,8 +86,20 @@ end
 function M.RefreshThreshold(item, settings)
     local override = settings.refreshThresholds and settings.refreshThresholds[item.id]
     if override ~= nil then return M.RefreshSeconds(override) end
+    if settings.onlyNeedsRefresh and not item.classBuff then
+        return M.Number(settings.needsRefreshSeconds, 300, 0, 3600)
+    end
     if item.id == M.SleepingBag then return BAG_REFRESH end
     return M.RefreshSeconds(settings.refreshDefault)
+end
+
+function M.ShowConsumable(item, auras, settings, now, weapons)
+    if not settings.onlyNeedsRefresh or item.classBuff then return true end
+    if (item.count or 0) <= 0 then return false end
+    local effect = M.Effect(item, auras, settings, now, weapons)
+    if not effect or effect.expires == nil then return true end
+    if effect.expires == 0 then return false end
+    return effect.expires - now < M.RefreshThreshold(item, settings)
 end
 
 -- Only hide food whose use text is entirely ordinary health/mana recovery.
