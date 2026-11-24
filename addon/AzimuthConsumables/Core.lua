@@ -7,7 +7,7 @@ local buttons, items, itemByID, auras = {}, {}, {}, {}
 local auraReadable, initialized = true, false
 local requested, metadata, bagSummary = {}, {}, {}
 local weapons = { effects = {}, readable = false }
-local pendingWeapon, pendingClassWeapon, layoutSignature, appliedGlow
+local pendingWeapon, pendingClassWeapon, layoutSignature, appliedGlow, weaponHands
 local visibleIDs = {}
 local queueLayout, activateProfile
 local HEADER_HEIGHT, HANDLE_HEIGHT = 24, 12
@@ -122,11 +122,12 @@ local function scanBags()
             end
         end
     end
-    items, itemByID = M.Items(slots, db), {}
-    for _, item in ipairs(items) do itemByID[item.id] = item end
-    for _, buff in ipairs(ns.ClassBuffs.Items(db, auras, M.Effect, GetTime(), weapons)) do
+    weaponHands = W.EquippedHands()
+    items, itemByID = W.ExpandItems(M.Items(slots, db), db, weaponHands), {}
+    for _, item in ipairs(items) do itemByID[M.EntryKey(item)] = item end
+    for _, buff in ipairs(ns.ClassBuffs.Items(db, auras, M.Effect, GetTime(), weapons, weaponHands)) do
         items[#items + 1] = buff
-        itemByID[buff.id] = buff
+        itemByID[M.EntryKey(buff)] = buff
     end
 end
 
@@ -159,7 +160,7 @@ local function pollWeapons()
     if pendingClassWeapon then
         if GetTime() > pendingClassWeapon.deadline then pendingClassWeapon = nil
         elseif pendingClassWeapon.success and W.Learn(pendingClassWeapon.before, weapons,
-            1, 0, db, pendingClassWeapon.id) then
+            1, 0, db, pendingClassWeapon.id, pendingClassWeapon.hand) then
             pendingClassWeapon = nil
         end
     end
@@ -168,7 +169,7 @@ local function pollWeapons()
         elseif C_Item and C_Item.GetItemCount then
             local count = read(C_Item.GetItemCount(pendingWeapon.id, false, false))
             if type(count) == "number" and W.Learn(pendingWeapon.before, weapons,
-                pendingWeapon.count, count, db, pendingWeapon.id) then pendingWeapon = nil end
+                pendingWeapon.count, count, db, pendingWeapon.id, pendingWeapon.hand) then pendingWeapon = nil end
         end
     end
 end
@@ -200,18 +201,21 @@ local function openPicker(item)
         label(picker, 10, "TOPLEFT", 12, -40):SetText("Choose the buff this item provides. Scroll for more.")
         table.insert(UISpecialFrames, "AzimuthConsumablesBuffPicker")
     end
-    picker.title:SetText((item.name or item.spellName) .. " - link effect")
+    picker.title:SetText((item.name or item.spellName) .. (item.hand == "main" and " (MH)" or item.hand == "off" and " (OH)" or "") .. " - link effect")
     picker.itemID = item.id
+    picker.hand = item.hand
     local choices = { { name = "Automatic matching (reset)", reset = true } }
     for _, effect in ipairs(weapons.effects) do
-        choices[#choices + 1] = {
-            name = (effect.hand == "main" and "Main hand" or "Off hand") .. ": weapon enchant " .. effect.enchantID,
-            weapon = true, hand = effect.hand, enchantID = effect.enchantID,
-        }
+        if not item.hand or item.hand == effect.hand then
+            choices[#choices + 1] = {
+                name = (effect.hand == "main" and "Main hand" or "Off hand") .. ": weapon enchant " .. effect.enchantID,
+                weapon = true, hand = effect.hand, enchantID = effect.enchantID,
+            }
+        end
     end
     local seen = {}
     for _, aura in ipairs(auras) do
-        if not (item.classBuff and item.weapon) and not seen[aura.spellID] then
+        if not item.hand and not (item.classBuff and item.weapon) and not seen[aura.spellID] then
             seen[aura.spellID] = true
             choices[#choices + 1] = aura
         end
@@ -227,11 +231,17 @@ local function openPicker(item)
             setTextFont(text, size, flags, font)
             row:SetScript("OnClick", function(self)
                 if combat() then say("Link buffs after leaving combat."); return end
-                if self.choice.reset then db.mappings[picker.itemID] = nil
-                elseif self.choice.weapon then db.mappings[picker.itemID] = {
+                local mappings = db.mappings
+                local key = picker.itemID
+                if picker.hand then
+                    db.handMappings[key] = db.handMappings[key] or {}
+                    mappings, key = db.handMappings[key], picker.hand
+                end
+                if self.choice.reset then mappings[key] = nil
+                elseif self.choice.weapon then mappings[key] = {
                     weapon = true, hand = self.choice.hand, enchantID = self.choice.enchantID,
                 }
-                else db.mappings[picker.itemID] = { self.choice.spellID } end
+                else mappings[key] = { self.choice.spellID } end
                 say("Updated effect link. Use /azc map for multiple buff IDs.")
                 closePicker()
                 rebuild()
@@ -285,6 +295,7 @@ local function newButton()
     b.count = label(b, 11, "TOPRIGHT", -2, -2)
     b.time = label(b, 10, "BOTTOM", 0, 2)
     b.status = label(b, 8, "CENTER", 0, 0)
+    b.hand = label(b, 8, "TOPLEFT", 2, -2)
     b.status:SetShadowColor(0, 0, 0, 1)
     b.status:SetShadowOffset(1, -1)
     b:SetScript("OnEnter", function(self)
@@ -306,6 +317,9 @@ local function newButton()
             end
             GameTooltip:AddLine("Shift-right-click: hide this item. /azc restore to restore.", 0.7, 0.7, 0.7, true)
         end
+        if self.item.hand then
+            GameTooltip:AddLine(self.item.hand == "main" and "Main-hand application" or "Off-hand application", 0.4, 1, 0.8)
+        end
         if self.statusCode then
             local status = M.Statuses[self.statusCode]
             GameTooltip:AddLine(status.label, unpack(status.color))
@@ -321,20 +335,21 @@ local function newButton()
             and self.item.weapon and self.item.castSpell then
             pollWeapons()
             pendingClassWeapon = { id = self.item.id, spellID = self.item.castSpell,
-                before = weapons, deadline = GetTime() + 15 }
+                hand = self.item.hand, before = weapons, deadline = GetTime() + 15 }
         end
         if mouse ~= "LeftButton" or down or not isWeaponConsumable(self.item) then return end
         pollWeapons()
         local count = C_Item.GetItemCount and read(C_Item.GetItemCount(self.item.id, false, false))
         if type(count) == "number" then
-            pendingWeapon = { id = self.item.id, count = count, before = weapons, deadline = GetTime() + 45 }
+            pendingWeapon = { id = self.item.id, hand = self.item.hand, count = count,
+                before = weapons, deadline = GetTime() + 45 }
         end
     end)
     b:HookScript("PostClick", function(self, mouse, down)
         if down or not self.item then return end
         if mouse == "LeftButton" then
-            local item = itemByID[self.item.id]
-            if item and item.count > 0 and isWeaponConsumable(item) and not combat() and ToggleCharacter then
+            local item = itemByID[M.EntryKey(self.item)]
+            if item and not item.hand and item.count > 0 and isWeaponConsumable(item) and not combat() and ToggleCharacter then
                 -- onlyShow keeps the equipment tab open on repeated clicks.
                 ToggleCharacter("PaperDollFrame", true)
             end
@@ -357,7 +372,7 @@ local function paint()
     local now = GetTime()
     for _, b in ipairs(buttons) do
         if b:IsShown() and b.item then
-            local current = itemByID[b.item.id]
+            local current = itemByID[M.EntryKey(b.item)]
             local item = current or b.item
             local start, duration, enabled = 0, 0, 1
             if not item.classBuff and C_Container.GetItemCooldown then
@@ -412,13 +427,14 @@ rebuild = function()
     for _, button in ipairs(buttons) do
         local previous = button.item
         if previous and not previous.classBuff and not M.IsExcluded(metadata[previous.id] or previous, db)
-            and not itemByID[previous.id]
+            and (not previous.hand or (weaponHands and tContains(weaponHands, previous.hand)))
+            and not itemByID[M.EntryKey(previous)]
             and M.Effect(previous, auras, db, GetTime(), weapons) then
             local tracked = {}
             for k, v in pairs(previous) do tracked[k] = v end
             tracked.count = 0
             items[#items + 1] = tracked
-            itemByID[tracked.id] = tracked
+            itemByID[M.EntryKey(tracked)] = tracked
         end
     end
     if combat() then paint(); return end
@@ -427,7 +443,7 @@ rebuild = function()
     for _, item in ipairs(items) do
         if M.ShowConsumable(item, auras, db, GetTime(), weapons) then
             visibleItems[#visibleItems + 1] = item
-            visibleIDs[item.id] = true
+            visibleIDs[M.EntryKey(item)] = true
         end
     end
     bar.title:SetShown(not db.hideTitle)
@@ -445,12 +461,12 @@ rebuild = function()
     local signatureParts = { tostring(db.scale), tostring(db.disabled), tostring(db.hideTitle), table.concat(p, ":"),
         db.iconSize, db.spacing, db.iconsPerLine, tostring(db.vertical), db.timerTextSize, db.countTextSize }
     for _, item in ipairs(visibleItems) do
-        signatureParts[#signatureParts + 1] = tostring(item.id)
+        signatureParts[#signatureParts + 1] = tostring(M.EntryKey(item))
         if item.classBuff then signatureParts[#signatureParts + 1] = "rank:" .. tostring(item.castSpell) end
     end
     local signature = table.concat(signatureParts, "|")
     if signature == layoutSignature then
-        for _, b in ipairs(buttons) do if b.item and itemByID[b.item.id] then b.item = itemByID[b.item.id] end end
+        for _, b in ipairs(buttons) do if b.item and itemByID[M.EntryKey(b.item)] then b.item = itemByID[M.EntryKey(b.item)] end end
         paint()
         return
     end
@@ -473,14 +489,16 @@ rebuild = function()
     for i, item in ipairs(visibleItems) do
         local b = buttons[i]
         if not b then b = newButton(); buttons[i] = b end
-        if not b.item or b.item.id ~= item.id or b.item.castSpell ~= item.castSpell then
+        if not b.item or M.EntryKey(b.item) ~= M.EntryKey(item) or b.item.castSpell ~= item.castSpell then
             local action = item.castSpell and "spell" or (not item.classBuff and "item" or nil)
             b:SetAttribute("type1", action)
             b:SetAttribute("spell1", item.castSpell)
             b:SetAttribute("unit1", item.classBuff and not item.weapon and "player" or nil)
             b:SetAttribute("item1", not item.classBuff and ("item:" .. item.id) or nil)
+            b:SetAttribute("target-slot1", item.hand and W.Slots[item.hand] or nil)
         end
         b.item = item
+        b.hand:SetText(item.hand == "main" and "MH" or item.hand == "off" and "OH" or "")
         b:SetSize(layout.size, layout.size)
         setTextFont(b.time, db.timerTextSize, "OUTLINE", STANDARD_TEXT_FONT)
         setTextFont(b.count, db.countTextSize, "OUTLINE", STANDARD_TEXT_FONT)
@@ -504,6 +522,7 @@ rebuild = function()
             b:SetAttribute("spell1", nil)
             b:SetAttribute("unit1", nil)
             b:SetAttribute("type1", nil)
+            b:SetAttribute("target-slot1", nil)
             b.item = nil
             b:Hide()
         end
@@ -526,6 +545,15 @@ local function normalizeSettings()
     db.hidden = type(db.hidden) == "table" and db.hidden or {}
     db.mappings = type(db.mappings) == "table" and db.mappings or {}
     db.weaponEnchants = type(db.weaponEnchants) == "table" and db.weaponEnchants or {}
+    db.handMappings = type(db.handMappings) == "table" and db.handMappings or {}
+    for id, hands in pairs(db.handMappings) do
+        if type(hands) ~= "table" then db.handMappings[id] = nil
+        else
+            for hand, mapping in pairs(hands) do
+                if (hand ~= "main" and hand ~= "off") or type(mapping) ~= "table" then hands[hand] = nil end
+            end
+        end
+    end
     for id, mapping in pairs(db.mappings) do
         if type(mapping) ~= "table" then db.mappings[id] = nil end
     end
@@ -630,7 +658,7 @@ local function initialize()
             if db.onlyNeedsRefresh and not combat() then
                 for _, item in ipairs(items) do
                     local show = M.ShowConsumable(item, auras, db, GetTime(), weapons)
-                    if show ~= (not not visibleIDs[item.id]) then queueLayout(); break end
+                    if show ~= (not not visibleIDs[M.EntryKey(item)]) then queueLayout(); break end
                 end
             end
         end
@@ -652,7 +680,7 @@ ns.BuildDebugReport = function(query)
     local version = metadata and metadata(ADDON, "Version") or "unknown"
     local statuses = {}
     for _, button in ipairs(buttons) do
-        if button:IsShown() and button.item then statuses[button.item.id] = button.statusCode end
+        if button:IsShown() and button.item then statuses[M.EntryKey(button.item)] = button.statusCode end
     end
     return ns.Diagnostics.Build({
         settings = db, version = version, class = class, profile = ns.ProfileName,
@@ -691,7 +719,7 @@ SlashCmdList.AZIMUTHCONSUMABLES = function(message)
         local idText, spells = args:match("^(%d+)%s+(.+)$")
         if not idText then say("/azc map ITEM_ID BUFF_ID [BUFF_ID ...], auto, main, off, or either"); return end
         local id, ids = tonumber(idText), {}
-        if spells == "auto" then db.mappings[id] = nil; db.weaponEnchants[id] = nil
+        if spells == "auto" then db.mappings[id] = nil; db.weaponEnchants[id] = nil; db.handMappings[id] = nil
         elseif spells == "main" or spells == "off" or spells == "either" then
             pollWeapons()
             local found

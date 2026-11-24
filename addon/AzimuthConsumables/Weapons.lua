@@ -3,10 +3,47 @@
 local _, ns = ...
 local W = {}
 ns.Weapons = W
+W.Slots = { main = 16, off = 17 }
 
 local function read(value)
     if issecretvalue and issecretvalue(value) then return nil end
     return value
+end
+
+function W.EquippedHands()
+    if not (GetInventoryItemID and C_Item and C_Item.GetItemInfoInstant) then return end
+    local hands = {}
+    for _, hand in ipairs({ "main", "off" }) do
+        local id = read(GetInventoryItemID("player", W.Slots[hand]))
+        if id then
+            local _, _, _, _, _, classID = C_Item.GetItemInfoInstant(id)
+            if read(classID) == 2 then hands[#hands + 1] = hand end
+        end
+    end
+    return hands
+end
+
+function W.ExpandItems(items, settings, hands)
+    if not hands then return items end
+    local result = {}
+    for _, item in ipairs(items) do
+        local mapping = settings.mappings[item.id]
+        local weapon = item.weapon or (mapping and mapping.weapon)
+            or (settings.weaponEnchants and settings.weaponEnchants[item.id])
+            or (settings.handMappings and settings.handMappings[item.id])
+        if weapon then
+            for _, hand in ipairs(hands) do
+                local copy = {}
+                for key, value in pairs(item) do copy[key] = value end
+                copy.hand = hand
+                copy.weapon = true
+                result[#result + 1] = copy
+            end
+        else
+            result[#result + 1] = item
+        end
+    end
+    return result
 end
 
 function W.Read(now)
@@ -75,13 +112,14 @@ function W.IsCandidate(item)
     return name:find("sharpening stone", 1, true) ~= nil
         or name:find("weightstone", 1, true) ~= nil
         or name:match(" oil$") ~= nil
+        or name:match(" poison%s*[ivx]*$") ~= nil
         or spell:find("sharpen", 1, true) ~= nil
 end
 
 -- Learn only after the clicked consumable's bag count actually fell, and
 -- exactly one weapon enchant changed/refreshed. A failed/cancelled use never
 -- assigns an arbitrary existing enchant to a stone.
-function W.Learn(before, after, oldCount, count, settings, itemID)
+function W.Learn(before, after, oldCount, count, settings, itemID, hand)
     if not before.readable or not after.readable or count >= oldCount then return false end
     local changed = {}
     for _, current in ipairs(after.effects) do
@@ -94,7 +132,7 @@ function W.Learn(before, after, oldCount, count, settings, itemID)
         end
         if not same then changed[#changed + 1] = current end
     end
-    if #changed ~= 1 then return false end
+    if #changed ~= 1 or (hand and changed[1].hand ~= hand) then return false end
     settings.weaponEnchants = settings.weaponEnchants or {}
     local ids = settings.weaponEnchants[itemID] or {}
     ids[changed[1].enchantID] = true

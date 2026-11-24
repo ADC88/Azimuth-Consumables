@@ -86,7 +86,9 @@ Multiple IDs mean alternative effects; the longest matching remaining effect is 
 
 ## Sharpening stones and weapon enchants
 
-Left-click a stone or weapon oil outside combat to use it and open the Character equipment tab. Click the weapon slot you want to coat. Repeated clicks keep the tab open.
+Weapon coatings and Shaman imbues have a separate **MH** or **OH** icon for each equipped weapon, for all classes. Shields and held off-hand items are excluded. Each icon targets its weapon slot when clicked and tracks that hand's enchant independently. Both consumable icons show the total copies available in your bags.
+
+Right-click a weapon icon to link an enchant for that hand. Your existing shared links remain usable, and new hand-specific links save in the active profile. The missing/expiring filter evaluates each hand separately. Weapon changes update the layout after combat.
 
 Weapon enchant timers use Forever's `C_Item.GetWeaponEnchantInfo`, with a legacy global API fallback. Both hands are read; temporary enchants and imbues are distinguished by their exact enchant ID, and permanent enchants are excluded. Weapon enchant IDs are different from buff spell IDs.
 

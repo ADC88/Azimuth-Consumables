@@ -9,6 +9,7 @@ local keys = {
     "preferredBuffs", "refreshDefault", "refreshThresholds",
     "iconSize", "spacing", "iconsPerLine", "vertical", "timerTextSize", "countTextSize",
     "onlyNeedsRefresh", "needsRefreshSeconds",
+    "handMappings",
 }
 
 local function copy(value)

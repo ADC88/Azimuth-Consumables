@@ -89,7 +89,7 @@ local function spellbookRanks()
     return byName
 end
 
-function B.Items(settings, auras, effect, now, weapons)
+function B.Items(settings, auras, effect, now, weapons, hands)
     if settings.hideClassBuffs or not C_Spell then return {} end
     local _, class = UnitClass("player")
     local known = C_SpellBook and C_SpellBook.IsSpellKnown or IsPlayerSpell
@@ -110,22 +110,26 @@ function B.Items(settings, auras, effect, now, weapons)
                 if known and known(id) then cast = id end
             end
             if family.class ~= class then cast = nil end
-            local item = { id = -base, count = 1, classBuff = true, castSpell = cast,
-                spellID = cast or base, spellName = info.name, icon = info.iconID, buffIDs = ids,
-                weapon = family.weapon }
-            local active = effect(item, auras, settings, now, weapons)
-            local disabled = settings.disabledBuffs and settings.disabledBuffs[-base]
-            if not disabled and (cast or (not settings.hideUnavailableClassBuffs and (family.class == class or active))) then
-                local key = family.class .. ":" .. (family.group or base)
-                local preferred = settings.preferredBuffs and settings.preferredBuffs[key] == -base
-                local previous = groups[key]
-                if not previous then
-                    items[#items + 1] = item
-                    groups[key] = { index = #items, active = active ~= nil, known = cast ~= nil, preferred = preferred }
-                elseif (active and not previous.active)
-                    or (not previous.active and cast and (not previous.known or (preferred and not previous.preferred))) then
-                    items[previous.index] = item
-                    previous.active, previous.known, previous.preferred = active ~= nil, cast ~= nil, preferred
+            local variants = family.weapon and (hands or { false }) or { false }
+            for _, hand in ipairs(variants) do
+                local item = { id = -base, count = 1, classBuff = true, castSpell = cast,
+                    spellID = cast or base, spellName = info.name, icon = info.iconID, buffIDs = ids,
+                    weapon = family.weapon, hand = hand or nil }
+                local active = effect(item, auras, settings, now, weapons)
+                local disabled = settings.disabledBuffs and settings.disabledBuffs[-base]
+                if not disabled and (cast or (not settings.hideUnavailableClassBuffs and (family.class == class or active))) then
+                    local group = family.class .. ":" .. (family.group or base)
+                    local key = group .. (hand and (":" .. hand) or "")
+                    local preferred = settings.preferredBuffs and settings.preferredBuffs[group] == -base
+                    local previous = groups[key]
+                    if not previous then
+                        items[#items + 1] = item
+                        groups[key] = { index = #items, active = active ~= nil, known = cast ~= nil, preferred = preferred }
+                    elseif (active and not previous.active)
+                        or (not previous.active and cast and (not previous.known or (preferred and not previous.preferred))) then
+                        items[previous.index] = item
+                        previous.active, previous.known, previous.preferred = active ~= nil, cast ~= nil, preferred
+                    end
                 end
             end
         end

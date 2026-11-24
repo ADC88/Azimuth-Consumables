@@ -2,6 +2,15 @@
 local _, ns = ...
 local M = {}
 ns.Model = M
+
+function M.EntryKey(item)
+    return item.hand and (tostring(item.id) .. ":" .. item.hand) or item.id
+end
+
+function M.Mapping(item, settings)
+    local hands = settings.handMappings and settings.handMappings[item.id]
+    return (item.hand and hands and hands[item.hand]) or settings.mappings[item.id]
+end
 M.Statuses = {
     ACTIVE = { label = "Active", badge = "", color = { 0.4, 1, 0.65 } },
     EXPIRING = { label = "Expiring soon", badge = "EXP", color = { 1, 0.55, 0.15 } },
@@ -162,7 +171,7 @@ end
 -- consumables apply a different aura. Match by ID first, localized name second.
 function M.Effect(item, auras, settings, now, weapons)
     local sleepingBag = item.id == M.SleepingBag
-    local mapping = not sleepingBag and settings.mappings[item.id]
+    local mapping = not sleepingBag and M.Mapping(item, settings)
     local learned = not sleepingBag and settings.weaponEnchants and settings.weaponEnchants[item.id]
     local best
     local function consider(effect)
@@ -175,12 +184,14 @@ function M.Effect(item, auras, settings, now, weapons)
     end
     if weapons and ((mapping and mapping.weapon) or (not mapping and (learned or (item.classBuff and item.weapon)))) then
         for _, effect in ipairs(weapons.effects) do
-            if mapping and mapping.weapon then
-                if (mapping.hand == "either" or mapping.hand == effect.hand)
-                    and mapping.enchantID == effect.enchantID then consider(effect) end
-            elseif (learned and learned[effect.enchantID])
-                or (item.classBuff and item.weapon and type(item.icon) == "number" and effect.icon == item.icon) then
-                consider(effect)
+            if not item.hand or item.hand == effect.hand then
+                if mapping and mapping.weapon then
+                    if (item.hand or mapping.hand == "either" or mapping.hand == effect.hand)
+                        and mapping.enchantID == effect.enchantID then consider(effect) end
+                elseif (learned and learned[effect.enchantID])
+                    or (item.classBuff and item.weapon and type(item.icon) == "number" and effect.icon == item.icon) then
+                    consider(effect)
+                end
             end
         end
         return best
@@ -227,7 +238,7 @@ function M.State(item, auras, settings, now, readable, weapons)
             active = true, effect = effect, cached = effect.cached,
             status = refresh and "EXPIRING" or "ACTIVE" }
     end
-    local mapping = settings.mappings[item.id]
+    local mapping = M.Mapping(item, settings)
     local isWeapon = not sleepingBag and (mapping and mapping.weapon or (not mapping and (item.weapon
         or (settings.weaponEnchants and settings.weaponEnchants[item.id]))))
     if (isWeapon and (not weapons or not weapons.readable)) or (not isWeapon and not readable) then

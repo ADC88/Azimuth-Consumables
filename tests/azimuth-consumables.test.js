@@ -290,6 +290,69 @@ test('class maintenance buffs follow class, live spellbook ranks and active alte
     assert.equal(newerRank, 999999);
 });
 
+test('dual-wield coatings have independent timers, targets and refresh filtering on a Warrior', () => {
+    const [hands, filtered, shield] = integration(`
+        emit({ { ns.Buttons[1].time:GetText(), ns.Buttons[1].hand:GetText(),
+            ns.Buttons[1]:GetAttribute("target-slot1") },
+            { ns.Buttons[2].time:GetText(), ns.Buttons[2].hand:GetText(),
+            ns.Buttons[2]:GetAttribute("target-slot1") } })
+        AzimuthConsumablesDB.onlyNeedsRefresh = true
+        AzimuthConsumablesDB.needsRefreshSeconds = 180
+        ns.Refresh()
+        emit({ ns.Buttons[1].item.hand, not ns.Buttons[2]:IsShown(),
+            ns.Buttons[1]:GetAttribute("item1") })
+        AzimuthConsumablesDB.onlyNeedsRefresh = false
+        offWeapon = false
+        stub.fire("PLAYER_EQUIPMENT_CHANGED", 17)
+        stub.runTimers()
+        emit({ ns.Buttons[1].item.hand, not ns.Buttons[2]:IsShown() })
+    `, `
+        UnitClass = function() return "Warrior", "WARRIOR" end
+        offWeapon = true
+        GetInventoryItemID = function(_, slot) return slot == 16 and 9016 or 9017 end
+        C_Item.GetItemInfoInstant = function(id)
+            if id == 1 then return id, "Consumable", "Enhancement", "", 123, 0, 6 end
+            return id, "Equipment", "", "", 123, id == 9017 and not offWeapon and 4 or 2, 0
+        end
+        AzimuthConsumablesDB = { weaponEnchants = { [1] = { [13] = true } } }
+        weaponData[0] = { { hasEnchant = true, enchantType = 2, enchantID = 13, timeLeft = 120000 } }
+        weaponData[1] = { { hasEnchant = true, enchantType = 2, enchantID = 13, timeLeft = 300000 } }
+    `);
+    assert.deepEqual(hands, [['2:00', 'MH', 16], ['5:00', 'OH', 17]]);
+    assert.deepEqual(filtered, ['main', true, 'item:1']);
+    assert.deepEqual(shield, ['main', true]);
+});
+
+test('dual-wield Shaman imbues select and link each hand independently', () => {
+    const [hands, link] = integration(`
+        emit({ { ns.Buttons[2].item.castSpell, ns.Buttons[2].time:GetText(), ns.Buttons[2]:GetAttribute("target-slot1") },
+            { ns.Buttons[3].item.castSpell, ns.Buttons[3].time:GetText(), ns.Buttons[3]:GetAttribute("target-slot1") } })
+        stub.RunScript(ns.Buttons[3], "PostClick", "RightButton", false)
+        AzimuthConsumablesBuffPicker.rows[2]:Click()
+        emit({ AzimuthConsumablesDB.handMappings[-8024].off.enchantID,
+            AzimuthConsumablesDB.handMappings[-8024].main == nil,
+            ns.Buttons[2].time:GetText(), ns.Buttons[3].time:GetText() })
+    `, `
+        UnitClass = function() return "Shaman", "SHAMAN" end
+        GetInventoryItemID = function(_, slot) return slot == 16 and 9016 or 9017 end
+        C_Item.GetItemInfoInstant = function(id)
+            return id, "", "", "", 123, id == 1 and 0 or 2, id == 1 and 2 or 0
+        end
+        local names = { [8232] = "Windfury Weapon", [8024] = "Flametongue Weapon" }
+        C_SpellBook = { IsSpellKnown = function(id) return names[id] ~= nil end }
+        C_Spell = {
+            GetSpellInfo = function(id)
+                if names[id] then return { name = names[id], iconID = id } end
+            end,
+            IsSpellUsable = function() return true end,
+        }
+        weaponData[0] = { { hasEnchant = true, enchantType = 3, enchantID = 9001, enchantIconID = 8232, timeLeft = 300000 } }
+        weaponData[1] = { { hasEnchant = true, enchantType = 3, enchantID = 9002, enchantIconID = 8024, timeLeft = 240000 } }
+    `);
+    assert.deepEqual(hands, [[8232, '5:00', 16], [8024, '4:00', 17]]);
+    assert.deepEqual(link, [9002, true, '5:00', '4:00']);
+});
+
 test('Shaman imbues already on either weapon are detected by their client icon', () => {
     const [flame, frost, rock, wind] = integration(`
         local function selected()

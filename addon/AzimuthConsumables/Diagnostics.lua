@@ -27,13 +27,13 @@ function D.Build(context)
             local state = ns.Model.State(item, context.auras, db, context.now, context.auraReadable, context.weapons)
             local effect = state.effect
             local match = effect and (effect.spellID or effect.enchantID or effect.name) or "none"
-            local status = context.statuses[item.id] or state.status
+            local status = context.statuses[ns.Model.EntryKey(item)] or state.status
             if not ns.Model.ShowConsumable(item, context.auras, db, context.now, context.weapons) then
                 status = "HIDDEN_ABOVE_REFRESH_THRESHOLD"
             end
             lines[#lines + 1] = ("%s #%d | status=%s | timer=%s | estimated=%s | match=%s | hand=%s | cast=%s | count=%d | refresh=%ds"):format(
                 item.name or item.spellName or "Item", item.id, status, state.text,
-                tostring(not not state.cached), tostring(match), tostring(effect and effect.hand or "none"),
+                tostring(not not state.cached), tostring(match), tostring(item.hand or (effect and effect.hand) or "none"),
                 tostring(item.castSpell or item.spellID), item.count or 0,
                 ns.Model.RefreshThreshold(item, db))
         end
