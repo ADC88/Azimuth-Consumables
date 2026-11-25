@@ -441,7 +441,7 @@ rebuild = function()
     local visibleItems = {}
     visibleIDs = {}
     for _, item in ipairs(items) do
-        if M.ShowConsumable(item, auras, db, GetTime(), weapons) then
+        if M.ShowEntry(item, auras, db, GetTime(), weapons) then
             visibleItems[#visibleItems + 1] = item
             visibleIDs[M.EntryKey(item)] = true
         end
@@ -657,7 +657,7 @@ local function initialize()
             paint()
             if db.onlyNeedsRefresh and not combat() then
                 for _, item in ipairs(items) do
-                    local show = M.ShowConsumable(item, auras, db, GetTime(), weapons)
+                    local show = M.ShowEntry(item, auras, db, GetTime(), weapons)
                     if show ~= (not not visibleIDs[M.EntryKey(item)]) then queueLayout(); break end
                 end
             end

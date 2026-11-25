@@ -597,7 +597,7 @@ test('consumable refresh filter returns hidden items as they expire and defers h
         end
         for _, control in ipairs(AzimuthConsumablesOptions.children) do
             if control:GetObjectType() == "CheckButton"
-                and control.regions[1]:GetText() == "Only show missing or expiring consumables" then
+                and control.regions[1]:GetText() == "Only show missing or expiring effects" then
                 control:SetChecked(true)
                 control:Click()
             end
@@ -631,6 +631,40 @@ test('consumable refresh filter returns hidden items as they expire and defers h
     assert.equal(duringCombat, true);
     assert.equal(afterCombat, false);
     assert.equal(override, true);
+});
+
+test('class buffs use the refresh visibility filter and their individual threshold overrides', () => {
+    const [hidden, expiring, overridden, missing] = integration(`
+        local shout = ns.Buttons[2]
+        buffs = { { spellId = 6673, name = "Battle Shout", expirationTime = 180 } }
+        stub.fire("UNIT_AURA", "player")
+        AzimuthConsumablesDB.onlyNeedsRefresh = true
+        AzimuthConsumablesDB.needsRefreshSeconds = 60
+        ns.Refresh()
+        emit(not shout:IsShown())
+        stub.advance(120.5)
+        emit({ shout:IsShown(), shout.time:GetText(), shout:GetAttribute("spell1") })
+        AzimuthConsumablesDB.refreshThresholds[-6673] = 0
+        ns.Refresh()
+        emit(not shout:IsShown())
+        buffs = {}
+        stub.fire("UNIT_AURA", "player")
+        stub.runTimers()
+        emit({ shout:IsShown(), shout.time:GetText() })
+    `, `
+        UnitClass = function() return "Warrior", "WARRIOR" end
+        C_SpellBook = { IsSpellKnown = function(id) return id == 6673 end }
+        C_Spell = {
+            GetSpellInfo = function(id)
+                if id == 6673 then return { name = "Battle Shout", iconID = 123 } end
+            end,
+            IsSpellUsable = function() return true end,
+        }
+    `);
+    assert.equal(hidden, true);
+    assert.deepEqual(expiring, [true, '1:00', 6673]);
+    assert.equal(overridden, true);
+    assert.deepEqual(missing, [true, 'READY']);
 });
 
 test('layout controls resize existing icons, wrap vertically and preserve protected actions during combat', () => {

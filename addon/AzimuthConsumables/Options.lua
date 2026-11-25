@@ -30,7 +30,7 @@ function ns.RegisterOptions(db, apply, label)
     local exclude = checkbox("Hide food and drink that only restore health or mana", "excludeRecoveryFood", -85)
     local hideClassBuffs = checkbox("Hide unavailable class buffs", "hideUnavailableClassBuffs", -118)
     local hideAllClassBuffs = checkbox("Hide class buffs", "hideClassBuffs", -154)
-    local needsRefresh = checkbox("Only show missing or expiring consumables", "onlyNeedsRefresh", -154, 202)
+    local needsRefresh = checkbox("Only show missing or expiring effects", "onlyNeedsRefresh", -154, 202)
     label(panel, 10, "TOPLEFT", 236, -187):SetText("Configure the reapplication threshold in Reminders.")
 
     local size = label(panel, 12, "TOPLEFT", 16, -219)

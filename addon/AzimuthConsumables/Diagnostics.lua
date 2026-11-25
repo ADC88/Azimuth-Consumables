@@ -14,7 +14,7 @@ function D.Build(context)
             db.spacing, db.timerTextSize, db.countTextSize),
         "Class buffs hidden: " .. tostring(not not db.hideClassBuffs)
             .. " | Unavailable buffs hidden: " .. tostring(db.hideUnavailableClassBuffs),
-        "Only missing/expiring consumables: " .. tostring(not not db.onlyNeedsRefresh)
+        "Only missing/expiring effects: " .. tostring(not not db.onlyNeedsRefresh)
             .. " | Reapplication threshold: " .. tostring(db.needsRefreshSeconds) .. "s",
         "",
         "Tracked entries",
@@ -28,7 +28,7 @@ function D.Build(context)
             local effect = state.effect
             local match = effect and (effect.spellID or effect.enchantID or effect.name) or "none"
             local status = context.statuses[ns.Model.EntryKey(item)] or state.status
-            if not ns.Model.ShowConsumable(item, context.auras, db, context.now, context.weapons) then
+            if not ns.Model.ShowEntry(item, context.auras, db, context.now, context.weapons) then
                 status = "HIDDEN_ABOVE_REFRESH_THRESHOLD"
             end
             lines[#lines + 1] = ("%s #%d | status=%s | timer=%s | estimated=%s | match=%s | hand=%s | cast=%s | count=%d | refresh=%ds"):format(
